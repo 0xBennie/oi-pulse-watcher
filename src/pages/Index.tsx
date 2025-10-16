@@ -1,5 +1,6 @@
 import { useCoinMonitor } from '@/hooks/useCoinMonitor';
 import { AddCoinDialog } from '@/components/AddCoinDialog';
+import { AddAlphaCoinsButton } from '@/components/AddAlphaCoinsButton';
 import { MonitorGrid } from '@/components/MonitorGrid';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,8 @@ const Index = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <AddAlphaCoinsButton onCoinsAdded={refresh} />
+            <AddCoinDialog onCoinAdded={refresh} />
             <Button
               variant="outline"
               size="sm"
@@ -39,7 +42,6 @@ const Index = () => {
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               刷新
             </Button>
-            <AddCoinDialog onCoinAdded={refresh} />
           </div>
         </header>
 
@@ -100,10 +102,14 @@ const Index = () => {
           </CardHeader>
           <CardContent>
             {loading && !lastUpdate ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className={monitorData.length === 1 ? 'max-w-2xl mx-auto' : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'}>
                 <Skeleton className="h-96 w-full" />
-                <Skeleton className="h-96 w-full" />
-                <Skeleton className="h-96 w-full" />
+                {monitorData.length > 1 && (
+                  <>
+                    <Skeleton className="h-96 w-full" />
+                    <Skeleton className="h-96 w-full" />
+                  </>
+                )}
               </div>
             ) : (
               <MonitorGrid data={monitorData} onCoinRemoved={refresh} />

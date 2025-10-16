@@ -18,13 +18,18 @@ export function MonitorGrid({ data, onCoinRemoved }: MonitorGridProps) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-muted-foreground space-y-2">
         <p className="text-lg">暂无监控币种</p>
-        <p className="text-sm">点击"添加币种"开始监控</p>
+        <p className="text-sm">点击"添加币种"或"添加Alpha币种"开始监控</p>
       </div>
     );
   }
 
+  // Adaptive layout based on number of coins
+  const gridClass = data.length === 1 
+    ? 'grid grid-cols-1 max-w-2xl mx-auto' 
+    : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4';
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+    <div className={gridClass}>
       {sortedData.map((item, index) => (
         <CoinCard
           key={item.coin.base}
