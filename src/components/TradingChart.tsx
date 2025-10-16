@@ -1,29 +1,58 @@
+import { useState } from 'react';
 import { HistoricalDataPoint } from '@/types/coin';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 
 interface TradingChartProps {
   data: HistoricalDataPoint[];
   symbol: string;
 }
 
+type TimeFrame = '15m' | '1h' | '4h';
+
 export function TradingChart({ data, symbol }: TradingChartProps) {
-  const formatTime = (timestamp: number) => {
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('15m');
+
+  const formatTime = (timestamp: number, frame: TimeFrame) => {
     const date = new Date(timestamp);
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
+    if (frame === '15m') {
+      return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    } else {
+      return date.toLocaleString('zh-CN', { 
+        month: '2-digit', 
+        day: '2-digit', 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      }).replace(/\//g, '-');
+    }
   };
 
-  // 每3个点取一个
-  const chartData = data
-    .filter((_, index) => index % 3 === 0 || index === data.length - 1)
-    .map((point) => ({
-      time: formatTime(point.timestamp),
-      价格: point.price,
-      CVD: point.cvd ? point.cvd / 1000 : 0,
-      fullTime: point.timestamp,
-    }));
+  // 根据时间周期聚合数据
+  const aggregateData = (rawData: HistoricalDataPoint[], frame: TimeFrame) => {
+    const interval = frame === '15m' ? 5 : frame === '1h' ? 20 : 80; // 3分钟 * interval
+    const result = [];
+    
+    for (let i = 0; i < rawData.length; i += interval) {
+      const chunk = rawData.slice(i, i + interval);
+      if (chunk.length === 0) continue;
+      
+      // 使用最后一个点的数据（最新）
+      const lastPoint = chunk[chunk.length - 1];
+      result.push(lastPoint);
+    }
+    
+    return result;
+  };
+
+  const aggregatedData = aggregateData(data, timeFrame);
+
+  const chartData = aggregatedData.map((point) => ({
+    time: formatTime(point.timestamp, timeFrame),
+    价格: point.price,
+    CVD: point.cvd ? point.cvd / 1000 : 0,
+    fullTime: point.timestamp,
+  }));
 
   if (chartData.length === 0) return null;
 
@@ -63,35 +92,61 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
 
   return (
     <div className="w-full">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-4">
         <div>
-          <h4 className="text-base font-semibold text-foreground">{symbol}</h4>
-          <p className="text-xs text-muted-foreground">价格与资金流向</p>
+          <h4 className="text-lg font-bold text-foreground">{symbol}</h4>
+          <p className="text-xs text-muted-foreground mt-1">价格走势与资金流向分析</p>
         </div>
-        <div className="flex gap-4 text-xs">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-0.5 bg-gradient-to-r from-primary to-primary/50"></div>
-            <span className="text-muted-foreground">价格</span>
+        <div className="flex items-center gap-4">
+          <div className="flex gap-1 bg-muted/50 p-1 rounded-lg">
+            {(['15m', '1h', '4h'] as TimeFrame[]).map((frame) => (
+              <Button
+                key={frame}
+                variant={timeFrame === frame ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setTimeFrame(frame)}
+                className={cn(
+                  "h-7 px-3 text-xs font-medium transition-all",
+                  timeFrame === frame && "shadow-md"
+                )}
+              >
+                {frame}
+              </Button>
+            ))}
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-0.5 bg-gradient-to-r from-green-500 to-red-500"></div>
-            <span className="text-muted-foreground">CVD</span>
+          <div className="flex gap-3 text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-0.5 bg-gradient-to-r from-primary via-primary to-primary/30 rounded-full"></div>
+              <span className="text-muted-foreground">价格</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-0.5 bg-gradient-to-r from-emerald-500 via-amber-500 to-rose-500 rounded-full"></div>
+              <span className="text-muted-foreground">CVD</span>
+            </div>
           </div>
         </div>
       </div>
-      <div className="h-80 w-full bg-gradient-to-b from-card/50 to-transparent rounded-xl border border-border/50 p-4">
+      <div className="h-96 w-full bg-gradient-to-br from-card via-card/95 to-card/80 rounded-xl border border-border/50 shadow-lg p-5">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
             <defs>
-              <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.8} />
-                <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.1} />
+              <linearGradient id="priceGradient" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.9} />
+                <stop offset="50%" stopColor="hsl(var(--primary))" stopOpacity={0.7} />
+                <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.4} />
               </linearGradient>
-              <linearGradient id="cvdGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#10b981" stopOpacity={0.8} />
-                <stop offset="50%" stopColor="#fbbf24" stopOpacity={0.6} />
-                <stop offset="100%" stopColor="#ef4444" stopOpacity={0.8} />
+              <linearGradient id="cvdGradient" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor="#10b981" stopOpacity={0.9} />
+                <stop offset="50%" stopColor="#f59e0b" stopOpacity={0.8} />
+                <stop offset="100%" stopColor="#ef4444" stopOpacity={0.9} />
               </linearGradient>
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
             </defs>
             <CartesianGrid 
               strokeDasharray="3 3" 
@@ -134,18 +189,29 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
               type="monotone"
               dataKey="价格"
               stroke="url(#priceGradient)"
-              strokeWidth={3}
+              strokeWidth={3.5}
               dot={false}
-              activeDot={{ r: 6, fill: 'hsl(var(--primary))', strokeWidth: 2, stroke: '#fff' }}
+              activeDot={{ 
+                r: 7, 
+                fill: 'hsl(var(--primary))', 
+                strokeWidth: 3, 
+                stroke: 'hsl(var(--background))',
+                filter: 'url(#glow)'
+              }}
             />
             <Line
               yAxisId="left"
               type="monotone"
               dataKey="CVD"
               stroke="url(#cvdGradient)"
-              strokeWidth={2.5}
+              strokeWidth={3}
               dot={false}
-              activeDot={{ r: 6, strokeWidth: 2, stroke: '#fff' }}
+              activeDot={{ 
+                r: 7, 
+                strokeWidth: 3, 
+                stroke: 'hsl(var(--background))',
+                filter: 'url(#glow)'
+              }}
             />
           </LineChart>
         </ResponsiveContainer>

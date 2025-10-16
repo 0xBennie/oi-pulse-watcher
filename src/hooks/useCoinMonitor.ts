@@ -13,7 +13,7 @@ interface HistoricalStorage {
   [symbol: string]: HistoricalDataPoint[];
 }
 
-const MAX_HISTORY_POINTS = 60; // 3小时历史 (60个点 * 3分钟 = 180分钟)
+const MAX_HISTORY_POINTS = 360; // 18小时历史 (360个点 * 3分钟 = 1080分钟)
 
 export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷新一次
   const [monitorData, setMonitorData] = useState<MonitorDataWithHistory[]>([]);
@@ -58,7 +58,7 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
         const [priceData, oiHistory, cvdHistory] = await Promise.all([
           fetchPriceData(coin.binance),
           fetchOIHistory(coin.binance, 4), // 获取4个数据点用于洗盘检测
-          getCVDHistory(coin.binance, 60),
+          getCVDHistory(coin.binance, 360), // 获取18小时历史数据
         ]);
 
         console.log(`${coin.base} CVD历史数据:`, cvdHistory.length, '个点');
