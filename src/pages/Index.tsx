@@ -7,7 +7,7 @@ import { RefreshCw, Activity } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const Index = () => {
-  const { monitorData, loading, lastUpdate, refresh } = useCoinMonitor(60000);
+  const { monitorData, loading, lastUpdate, refresh } = useCoinMonitor(10000);
 
   const formatLastUpdate = (date: Date | null) => {
     if (!date) return 'Never';
@@ -87,7 +87,7 @@ const Index = () => {
           <CardHeader>
             <CardTitle>Monitor Dashboard</CardTitle>
             <CardDescription>
-              Auto-refreshes every 60 seconds. STRONG alerts: OI Δ ≥10% & 5m% ≥2% | MEDIUM: OI Δ
+              Auto-refreshes every 10 seconds. STRONG alerts: OI Δ ≥10% & 5m% ≥2% | MEDIUM: OI Δ
               ≥8% & 5m% ≥1.5% | WEAK: OI Δ ≥5% or 5m% ≥1%
             </CardDescription>
           </CardHeader>
@@ -105,7 +105,7 @@ const Index = () => {
         </Card>
 
         <footer className="text-center text-sm text-muted-foreground py-4">
-          <p>Data from Binance Futures API • Updates every 60 seconds</p>
+          <p>Data from Binance Futures API • Updates every 10 seconds</p>
         </footer>
       </div>
     </div>
