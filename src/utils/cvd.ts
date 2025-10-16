@@ -17,7 +17,7 @@ export async function collectCVDData(symbol: string): Promise<void> {
   }
 }
 
-export async function getCVDHistory(symbol: string, limit: number = 180): Promise<CVDDataPoint[]> {
+export async function getCVDHistory(symbol: string, limit: number = 60): Promise<CVDDataPoint[]> {
   const { data, error } = await supabase.functions.invoke('get-cvd-history', {
     body: { symbol, limit }
   });

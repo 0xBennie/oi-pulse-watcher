@@ -8,7 +8,7 @@ import { RefreshCw, Activity, AlertTriangle, Clock } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const Index = () => {
-  const { monitorData, loading, lastUpdate, coins, refresh } = useCoinMonitor(10000);
+  const { monitorData, loading, lastUpdate, coins, refresh } = useCoinMonitor();
 
   const formatLastUpdate = (date: Date | null) => {
     if (!date) return '从未';
@@ -24,9 +24,9 @@ const Index = () => {
       <div className="container mx-auto p-6 space-y-6">
         <header className="flex items-center justify-between">
           <div>
-            <h1 className="text-4xl font-bold tracking-tight">持仓量与涨幅监控</h1>
+            <h1 className="text-4xl font-bold tracking-tight">CVD与价格监控</h1>
             <p className="text-muted-foreground mt-2">
-              币安永续合约实时监控面板
+              每3分钟自动刷新 • 强告警: 持仓量Δ ≥10% 且 5m涨幅 ≥2% | 中告警: 持仓量Δ ≥8% 且 5m涨幅 ≥1.5% | 弱告警: 持仓量Δ ≥5% 或 5m涨幅 ≥1%
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -95,9 +95,9 @@ const Index = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>监控面板</CardTitle>
+            <CardTitle>CVD监控面板</CardTitle>
             <CardDescription>
-              每10秒自动刷新 • 强告警：持仓量Δ ≥10% 且 5m涨幅 ≥2% | 中告警：持仓量Δ ≥8% 且 5m涨幅 ≥1.5% | 弱告警：持仓量Δ ≥5% 或 5m涨幅 ≥1%
+              每3分钟自动更新CVD数据 • 橙色线: CVD累积量 • 紫色虚线: 价格走势
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -118,7 +118,7 @@ const Index = () => {
         </Card>
 
         <footer className="text-center text-sm text-muted-foreground py-4">
-          <p>数据来源：币安永续合约 API • 每10秒更新一次</p>
+          <p>数据来源：币安永续合约 API • 每3分钟更新一次 • CVD = 累积买卖量差</p>
         </footer>
       </div>
     </div>

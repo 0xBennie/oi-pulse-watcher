@@ -42,7 +42,9 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
 
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
-    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    return `${hours}:${minutes}`;
   };
 
   const handleRemove = () => {
@@ -55,11 +57,23 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
     }
   };
 
-  const chartData = data.history.map(point => ({
-    time: formatTime(point.timestamp),
-    price: point.price,
-    cvd: point.cvd ? point.cvd / 1_000 : 0, // Convert to thousands for better scale
-  }));
+  // 过滤和优化图表数据显示
+  const chartData = data.history
+    .filter((_, index) => index % 3 === 0 || index === data.history.length - 1) // 每3个点显示1个，减少X轴拥挤
+    .map(point => {
+      const cvdValue = point.cvd ? point.cvd / 1_000 : 0;
+      console.log(`${data.coin.base} 图表数据点:`, {
+        time: formatTime(point.timestamp),
+        price: point.price,
+        cvd: cvdValue,
+        rawCvd: point.cvd
+      });
+      return {
+        time: formatTime(point.timestamp),
+        price: point.price,
+        cvd: cvdValue,
+      };
+    });
 
   const borderColor = {
     STRONG: 'border-l-alert-strong',
@@ -107,6 +121,8 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
                   dataKey="time"
                   tick={{ fontSize: 10 }}
                   stroke="hsl(var(--muted-foreground))"
+                  interval="preserveStartEnd"
+                  minTickGap={30}
                 />
                 <YAxis
                   yAxisId="left"
