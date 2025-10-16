@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { AlertBadge } from './AlertBadge';
 import { AlertBanner } from './AlertBanner';
 import { WhaleSignalBadge } from './WhaleSignalBadge';
-import { TradingViewChart } from './TradingViewChart';
+import { TradingChart } from './TradingChart';
 import { MetricItem } from './MetricItem';
 import { Trash2, DollarSign, TrendingUp, Activity, Clock, BarChart3, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -95,7 +95,7 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
         {data.whaleSignal && <WhaleSignalBadge signal={data.whaleSignal} />}
 
         {data.history.length > 1 && (
-          <TradingViewChart data={data.history} symbol={data.coin.base} />
+          <TradingChart data={data.history} symbol={data.coin.base} />
         )}
 
         <div className="grid grid-cols-2 gap-3">
