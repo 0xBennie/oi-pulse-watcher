@@ -20,19 +20,19 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
     e.preventDefault();
     
     if (!base || !binance) {
-      toast.error('Please fill in all required fields');
+      toast.error('请填写所有必填字段');
       return;
     }
 
     try {
       addCoin({ base: base.toUpperCase(), binance: binance.toUpperCase() });
-      toast.success(`Added ${base.toUpperCase()} to monitor list`);
+      toast.success(`已添加 ${base.toUpperCase()} 到监控列表`);
       setBase('');
       setBinance('');
       setOpen(false);
       onCoinAdded();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to add coin');
+      toast.error(error instanceof Error ? error.message : '添加失败');
     }
   };
 
@@ -41,29 +41,29 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2">
           <Plus className="w-4 h-4" />
-          Add Coin
+          添加币种
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add New Coin</DialogTitle>
+          <DialogTitle>添加新币种</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="base">Coin Symbol</Label>
+            <Label htmlFor="base">币种符号</Label>
             <Input
               id="base"
-              placeholder="e.g., APE"
+              placeholder="例如：APE"
               value={base}
               onChange={(e) => setBase(e.target.value)}
               className="uppercase"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="binance">Binance Symbol</Label>
+            <Label htmlFor="binance">币安交易对</Label>
             <Input
               id="binance"
-              placeholder="e.g., APEUSDT"
+              placeholder="例如：APEUSDT"
               value={binance}
               onChange={(e) => setBinance(e.target.value)}
               className="uppercase"
@@ -71,9 +71,9 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-              Cancel
+              取消
             </Button>
-            <Button type="submit">Add Coin</Button>
+            <Button type="submit">添加</Button>
           </div>
         </form>
       </DialogContent>

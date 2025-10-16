@@ -29,6 +29,16 @@ export interface MonitorData {
   lastUpdate: number;
 }
 
+export interface HistoricalDataPoint {
+  timestamp: number;
+  price: number;
+  openInterest: number;
+}
+
+export interface MonitorDataWithHistory extends MonitorData {
+  history: HistoricalDataPoint[];
+}
+
 export type AlertLevel = 'NONE' | 'WEAK' | 'MEDIUM' | 'STRONG';
 
 export type SortField = 'symbol' | 'price' | '24h%' | '5m%' | 'oi' | 'oiChange' | 'alert';

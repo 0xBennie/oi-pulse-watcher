@@ -18,21 +18,21 @@ export function AlertBadge({ level, className }: AlertBadgeProps) {
       text: 'text-alert-strong',
       border: 'border-alert-strong/50',
       icon: AlertTriangle,
-      label: 'STRONG',
+      label: '强',
     },
     MEDIUM: {
       bg: 'bg-alert-medium/10',
       text: 'text-alert-medium',
       border: 'border-alert-medium/50',
       icon: AlertCircle,
-      label: 'MEDIUM',
+      label: '中',
     },
     WEAK: {
       bg: 'bg-alert-weak/10',
       text: 'text-alert-weak',
       border: 'border-alert-weak/50',
       icon: Info,
-      label: 'WEAK',
+      label: '弱',
     },
   };
 
