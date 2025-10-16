@@ -14,7 +14,63 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      cvd_data: {
+        Row: {
+          created_at: string | null
+          cvd: number
+          id: string
+          price: number
+          symbol: string
+          timestamp: number
+        }
+        Insert: {
+          created_at?: string | null
+          cvd: number
+          id?: string
+          price: number
+          symbol: string
+          timestamp: number
+        }
+        Update: {
+          created_at?: string | null
+          cvd?: number
+          id?: string
+          price?: number
+          symbol?: string
+          timestamp?: number
+        }
+        Relationships: []
+      }
+      trade_data: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_buyer_maker: boolean
+          price: number
+          quantity: number
+          symbol: string
+          timestamp: number
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_buyer_maker: boolean
+          price: number
+          quantity: number
+          symbol: string
+          timestamp: number
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_buyer_maker?: boolean
+          price?: number
+          quantity?: number
+          symbol?: string
+          timestamp?: number
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

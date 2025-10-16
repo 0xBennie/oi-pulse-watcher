@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { MonitorDataWithHistory, AlertLevel, HistoricalDataPoint } from '@/types/coin';
 import { getStoredCoins } from '@/utils/storage';
 import { fetchPriceData, fetchOIHistory, calculatePercentageChange } from '@/utils/binance';
+import { collectCVDData, getCVDHistory } from '@/utils/cvd';
 
 interface PriceHistory {
   [symbol: string]: { price: number; timestamp: number };
@@ -48,9 +49,15 @@ export function useCoinMonitor(refreshInterval: number = 60000) {
 
     const results = await Promise.all(
       storedCoins.map(async (coin) => {
-        const [priceData, oiHistory] = await Promise.all([
+        // 先触发CVD数据收集（后台执行）
+        collectCVDData(coin.binance).catch(err => {
+          console.error(`CVD collection failed for ${coin.binance}:`, err);
+        });
+
+        const [priceData, oiHistory, cvdHistory] = await Promise.all([
           fetchPriceData(coin.binance),
           fetchOIHistory(coin.binance),
+          getCVDHistory(coin.binance, 180),
         ]);
 
         if (!priceData || oiHistory.length === 0) {
@@ -78,23 +85,41 @@ export function useCoinMonitor(refreshInterval: number = 60000) {
           previousOI.sumOpenInterestValue
         );
 
+        // 计算CVD变化
+        const currentCVD = cvdHistory.length > 0 ? cvdHistory[cvdHistory.length - 1].cvd : 0;
+        const previousCVD = cvdHistory.length > 1 ? cvdHistory[0].cvd : currentCVD;
+        const cvdChangePercent = calculatePercentageChange(currentCVD, previousCVD);
+
         const alertLevel = determineAlertLevel(oiChangePercent, priceChangePercent5m);
 
-        // Update historical data
+        // Update historical data - 合并CVD历史数据
         const timestamp = Date.now();
-        const newDataPoint: HistoricalDataPoint = {
-          timestamp,
-          price: currentPrice,
-          openInterest: currentOI.sumOpenInterestValue,
-        };
+        
+        // 如果有CVD历史数据，使用它；否则创建新的数据点
+        let updatedHistory: HistoricalDataPoint[];
+        
+        if (cvdHistory.length > 0) {
+          // 将CVD历史转换为HistoricalDataPoint格式
+          updatedHistory = cvdHistory.map(point => ({
+            timestamp: point.timestamp,
+            price: point.price,
+            openInterest: currentOI.sumOpenInterestValue, // 使用当前OI作为占位
+            cvd: point.cvd,
+          }));
+        } else {
+          // 如果没有CVD数据，使用传统方式
+          const newDataPoint: HistoricalDataPoint = {
+            timestamp,
+            price: currentPrice,
+            openInterest: currentOI.sumOpenInterestValue,
+          };
 
-        // Get existing history or create new array
-        const existingHistory = historicalDataRef.current[coin.base] || [];
-        const updatedHistory = [...existingHistory, newDataPoint];
+          const existingHistory = historicalDataRef.current[coin.base] || [];
+          updatedHistory = [...existingHistory, newDataPoint];
 
-        // Keep only last MAX_HISTORY_POINTS points
-        if (updatedHistory.length > MAX_HISTORY_POINTS) {
-          updatedHistory.shift();
+          if (updatedHistory.length > MAX_HISTORY_POINTS) {
+            updatedHistory.shift();
+          }
         }
 
         historicalDataRef.current[coin.base] = updatedHistory;
@@ -106,6 +131,8 @@ export function useCoinMonitor(refreshInterval: number = 60000) {
           priceChangePercent5m,
           openInterest: currentOI.sumOpenInterestValue,
           openInterestChangePercent5m: oiChangePercent,
+          cvd: currentCVD,
+          cvdChangePercent5m: cvdChangePercent,
           alertLevel,
           lastUpdate: timestamp,
           history: updatedHistory,

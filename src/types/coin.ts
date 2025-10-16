@@ -25,6 +25,8 @@ export interface MonitorData {
   priceChangePercent5m: number;
   openInterest: number;
   openInterestChangePercent5m: number;
+  cvd: number; // CVD值
+  cvdChangePercent5m: number; // CVD变化百分比
   alertLevel: AlertLevel;
   lastUpdate: number;
 }
@@ -33,6 +35,7 @@ export interface HistoricalDataPoint {
   timestamp: number;
   price: number;
   openInterest: number;
+  cvd?: number; // 新增CVD字段
 }
 
 export interface MonitorDataWithHistory extends MonitorData {

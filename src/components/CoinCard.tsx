@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { AlertBadge } from './AlertBadge';
 import { AlertBanner } from './AlertBanner';
 import { MetricItem } from './MetricItem';
-import { Trash2, DollarSign, TrendingUp, Activity, Clock, BarChart3 } from 'lucide-react';
+import { Trash2, DollarSign, TrendingUp, Activity, Clock, BarChart3, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { removeCoin } from '@/utils/storage';
 import { toast } from 'sonner';
@@ -32,6 +32,14 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
     return `$${oi.toFixed(0)}`;
   };
 
+  const formatCVD = (cvd: number) => {
+    const absCvd = Math.abs(cvd);
+    const sign = cvd >= 0 ? '+' : '-';
+    if (absCvd >= 1_000_000) return `${sign}${(absCvd / 1_000_000).toFixed(2)}M`;
+    if (absCvd >= 1_000) return `${sign}${(absCvd / 1_000).toFixed(2)}K`;
+    return `${sign}${absCvd.toFixed(0)}`;
+  };
+
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
     return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
@@ -50,7 +58,7 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
   const chartData = data.history.map(point => ({
     time: formatTime(point.timestamp),
     price: point.price,
-    oi: point.openInterest / 1_000_000, // Convert to millions
+    cvd: point.cvd ? point.cvd / 1_000 : 0, // Convert to thousands for better scale
   }));
 
   const borderColor = {
@@ -87,7 +95,7 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
       <CardContent className="space-y-4">
         <AlertBanner
           level={data.alertLevel}
-          oiChange={data.openInterestChangePercent5m}
+          oiChange={data.cvdChangePercent5m}
           priceChange5m={data.priceChangePercent5m}
         />
 
@@ -102,16 +110,16 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
                 />
                 <YAxis
                   yAxisId="left"
-                  tick={{ fontSize: 10 }}
-                  stroke="hsl(var(--primary))"
-                  label={{ value: 'OI (M)', angle: -90, position: 'insideLeft', fontSize: 10 }}
+                  tick={{ fontSize: 10, fill: '#f97316' }}
+                  stroke="#f97316"
+                  label={{ value: 'CVD (K)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#f97316' }}
                 />
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  tick={{ fontSize: 10 }}
-                  stroke="hsl(var(--chart-2))"
-                  label={{ value: '价格 (USDT)', angle: 90, position: 'insideRight', fontSize: 10 }}
+                  tick={{ fontSize: 10, fill: '#a855f7' }}
+                  stroke="#a855f7"
+                  label={{ value: '价格', angle: 90, position: 'insideRight', fontSize: 10, fill: '#a855f7' }}
                 />
                 <Tooltip
                   contentStyle={{
@@ -125,17 +133,17 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
                 <Line
                   yAxisId="left"
                   type="monotone"
-                  dataKey="oi"
-                  stroke="hsl(var(--primary))"
-                  strokeWidth={2}
+                  dataKey="cvd"
+                  stroke="#f97316"
+                  strokeWidth={2.5}
                   dot={false}
-                  name="持仓量(M)"
+                  name="CVD(K)"
                 />
                 <Line
                   yAxisId="right"
                   type="monotone"
                   dataKey="price"
-                  stroke="hsl(var(--chart-2))"
+                  stroke="#a855f7"
                   strokeWidth={2}
                   strokeDasharray="5 5"
                   dot={false}
@@ -165,15 +173,16 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
             trend={data.priceChangePercent5m > 0 ? 'up' : 'down'}
           />
           <MetricItem
-            icon={<BarChart3 className="w-4 h-4" />}
-            label="持仓量"
-            value={formatOI(data.openInterest)}
+            icon={data.cvd >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+            label="CVD"
+            value={formatCVD(data.cvd)}
+            trend={data.cvd >= 0 ? 'up' : 'down'}
           />
           <MetricItem
-            icon={<TrendingUp className="w-4 h-4" />}
-            label="5m持仓变化"
-            value={`${data.openInterestChangePercent5m > 0 ? '+' : ''}${data.openInterestChangePercent5m.toFixed(2)}%`}
-            trend={data.openInterestChangePercent5m > 0 ? 'up' : 'down'}
+            icon={<Activity className="w-4 h-4" />}
+            label="5m CVD变化"
+            value={`${data.cvdChangePercent5m > 0 ? '+' : ''}${data.cvdChangePercent5m.toFixed(2)}%`}
+            trend={data.cvdChangePercent5m > 0 ? 'up' : 'down'}
           />
           <MetricItem
             icon={<Clock className="w-4 h-4" />}
