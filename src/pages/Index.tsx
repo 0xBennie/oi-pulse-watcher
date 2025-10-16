@@ -15,10 +15,13 @@ const Index = () => {
 
   // 自动选择第一个币种
   useEffect(() => {
-    if (monitorData.length > 0 && !selectedCoin) {
-      setSelectedCoin(monitorData[0].coin.base);
+    if (monitorData.length > 0) {
+      // 如果没有选中币种，或选中的币种不在列表中，选择第一个
+      if (!selectedCoin || !monitorData.find(d => d.coin.base === selectedCoin)) {
+        setSelectedCoin(monitorData[0].coin.base);
+      }
     }
-  }, [monitorData, selectedCoin]);
+  }, [monitorData]);
 
   // 获取选中的币种数据
   const selectedCoinData = monitorData.find(d => d.coin.base === selectedCoin);
@@ -168,7 +171,11 @@ const Index = () => {
                   }} 
                 />
               </div>
-            ) : null}
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>正在加载数据...</p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
