@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AlertBadge } from './AlertBadge';
 import { AlertBanner } from './AlertBanner';
+import { WhaleSignalBadge } from './WhaleSignalBadge';
 import { MetricItem } from './MetricItem';
 import { Trash2, DollarSign, TrendingUp, Activity, Clock, BarChart3, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -112,6 +113,8 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
           oiChange={data.cvdChangePercent5m}
           priceChange5m={data.priceChangePercent5m}
         />
+
+        {data.whaleSignal && <WhaleSignalBadge signal={data.whaleSignal} />}
 
         {chartData.length > 1 && (
           <div className="h-48 w-full">

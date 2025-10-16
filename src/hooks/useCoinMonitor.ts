@@ -3,6 +3,7 @@ import { MonitorDataWithHistory, AlertLevel, HistoricalDataPoint } from '@/types
 import { getStoredCoins } from '@/utils/storage';
 import { fetchPriceData, fetchOIHistory, calculatePercentageChange } from '@/utils/binance';
 import { collectCVDData, getCVDHistory } from '@/utils/cvd';
+import { detectWhaleSignal } from '@/utils/whaleDetection';
 
 interface PriceHistory {
   [symbol: string]: { price: number; timestamp: number };
@@ -56,7 +57,7 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
 
         const [priceData, oiHistory, cvdHistory] = await Promise.all([
           fetchPriceData(coin.binance),
-          fetchOIHistory(coin.binance),
+          fetchOIHistory(coin.binance, 4), // 获取4个数据点用于洗盘检测
           getCVDHistory(coin.binance, 60),
         ]);
 
@@ -79,9 +80,9 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
           [coin.base]: { price: currentPrice, timestamp: Date.now() },
         }));
 
-        // Calculate OI change
-        const currentOI = oiHistory[oiHistory.length - 1];
-        const previousOI = oiHistory[0];
+        // Calculate OI change (注意：oiHistory是倒序的，最新的在前)
+        const currentOI = oiHistory[0]; // 最新数据
+        const previousOI = oiHistory[1]; // 5分钟前数据
         const oiChangePercent = calculatePercentageChange(
           currentOI.sumOpenInterestValue,
           previousOI.sumOpenInterestValue
@@ -91,6 +92,13 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
         const currentCVD = cvdHistory.length > 0 ? cvdHistory[cvdHistory.length - 1].cvd : 0;
         const previousCVD = cvdHistory.length > 1 ? cvdHistory[0].cvd : currentCVD;
         const cvdChangePercent = calculatePercentageChange(currentCVD, previousCVD);
+
+        // 检测庄家信号
+        const whaleSignal = detectWhaleSignal(
+          oiHistory,
+          priceChangePercent5m,
+          priceData.quoteVolume || 0
+        );
 
         const alertLevel = determineAlertLevel(oiChangePercent, priceChangePercent5m);
 
@@ -135,6 +143,8 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
           openInterestChangePercent5m: oiChangePercent,
           cvd: currentCVD,
           cvdChangePercent5m: cvdChangePercent,
+          volume24h: priceData.quoteVolume || 0,
+          whaleSignal,
           alertLevel,
           lastUpdate: timestamp,
           history: updatedHistory,

@@ -19,6 +19,8 @@ export async function fetchPriceData(symbol: string): Promise<PriceData | null> 
       symbol: data.symbol,
       price: parseFloat(data.lastPrice),
       priceChangePercent24h: parseFloat(data.priceChangePercent),
+      volume: parseFloat(data.volume),
+      quoteVolume: parseFloat(data.quoteVolume), // 24h成交额（USDT）
     };
   } catch (error) {
     console.error(`Error fetching price for ${symbol}:`, error);
@@ -26,10 +28,10 @@ export async function fetchPriceData(symbol: string): Promise<PriceData | null> 
   }
 }
 
-export async function fetchOIHistory(symbol: string): Promise<OIData[]> {
+export async function fetchOIHistory(symbol: string, limit: number = 4): Promise<OIData[]> {
   try {
     const response = await fetch(
-      `${BINANCE_API_BASE}/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=2`
+      `${BINANCE_API_BASE}/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=${limit}`
     );
     
     if (!response.ok) {
