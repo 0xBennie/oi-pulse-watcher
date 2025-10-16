@@ -13,7 +13,7 @@ serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_PUBLISHABLE_KEY')!;
+    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!; // 使用正确的环境变量名
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     const { symbol, limit = 180 } = await req.json();

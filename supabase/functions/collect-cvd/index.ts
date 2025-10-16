@@ -12,7 +12,7 @@ interface TradeData {
   id: number;
   price: string;
   qty: string;
-  time: number;
+  T: number; // Binance API 使用 T（大写）作为时间戳字段
   isBuyerMaker: boolean;
 }
 
@@ -60,7 +60,7 @@ serve(async (req) => {
 
       tradeRecords.push({
         symbol,
-        timestamp: trade.time,
+        timestamp: trade.T, // 使用正确的 Binance API 字段 T（大写）
         price: parseFloat(trade.price),
         quantity: volume,
         is_buyer_maker: trade.isBuyerMaker,
@@ -78,7 +78,7 @@ serve(async (req) => {
 
     // 获取最新价格
     const latestPrice = parseFloat(trades[trades.length - 1].price);
-    const latestTimestamp = trades[trades.length - 1].time;
+    const latestTimestamp = trades[trades.length - 1].T; // 使用正确的 Binance API 字段 T（大写）
 
     // 获取上一个CVD值
     const { data: prevCvdData } = await supabase
