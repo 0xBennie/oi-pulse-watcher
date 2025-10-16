@@ -12,7 +12,7 @@ interface TradeData {
   id: number;
   price: string;
   qty: string;
-  T: number; // Binance API 使用 T（大写）作为时间戳字段
+  time: number; // trades API使用time字段
   isBuyerMaker: boolean;
 }
 
@@ -37,12 +37,14 @@ serve(async (req) => {
 
     console.log(`Collecting trades for ${symbol}`);
 
-    // 获取最近1000笔交易
+    // 获取最近1000笔交易（使用trades而不是aggTrades，aggTrades没有isBuyerMaker字段）
     const response = await fetch(
-      `${BINANCE_API_BASE}/fapi/v1/aggTrades?symbol=${symbol}&limit=1000`
+      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${symbol}&limit=1000`
     );
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`Binance API error for ${symbol}:`, errorText);
       throw new Error(`Failed to fetch trades: ${response.status}`);
     }
 
@@ -60,7 +62,7 @@ serve(async (req) => {
 
       tradeRecords.push({
         symbol,
-        timestamp: trade.T, // 使用正确的 Binance API 字段 T（大写）
+        timestamp: trade.time,
         price: parseFloat(trade.price),
         quantity: volume,
         is_buyer_maker: trade.isBuyerMaker,
@@ -76,9 +78,9 @@ serve(async (req) => {
       console.error('Error inserting trade data:', tradeError);
     }
 
-    // 获取最新价格
+    // 获取最新价格和时间戳
     const latestPrice = parseFloat(trades[trades.length - 1].price);
-    const latestTimestamp = trades[trades.length - 1].T; // 使用正确的 Binance API 字段 T（大写）
+    const latestTimestamp = trades[trades.length - 1].time;
 
     // 获取上一个CVD值
     const { data: prevCvdData } = await supabase
