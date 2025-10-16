@@ -3,8 +3,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Plus } from 'lucide-react';
+import { Plus, Loader2 } from 'lucide-react';
 import { addCoin } from '@/utils/storage';
+import { fetchPriceData } from '@/utils/binance';
 import { toast } from 'sonner';
 
 interface AddCoinDialogProps {
@@ -15,8 +16,9 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
   const [open, setOpen] = useState(false);
   const [base, setBase] = useState('');
   const [binance, setBinance] = useState('');
+  const [validating, setValidating] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!base || !binance) {
@@ -24,8 +26,21 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
       return;
     }
 
+    const symbolToAdd = binance.toUpperCase();
+    setValidating(true);
+
     try {
-      addCoin({ base: base.toUpperCase(), binance: binance.toUpperCase() });
+      // 先验证symbol是否有效
+      const priceData = await fetchPriceData(symbolToAdd);
+      
+      if (!priceData) {
+        toast.error(`${symbolToAdd} 不是有效的币安合约交易对，请检查后重试`);
+        setValidating(false);
+        return;
+      }
+
+      // 验证通过，添加到列表
+      addCoin({ base: base.toUpperCase(), binance: symbolToAdd });
       toast.success(`已添加 ${base.toUpperCase()} 到监控列表`);
       setBase('');
       setBinance('');
@@ -33,6 +48,8 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
       onCoinAdded();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '添加失败');
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -70,10 +87,13 @@ export function AddCoinDialog({ onCoinAdded }: AddCoinDialogProps) {
             />
           </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={validating}>
               取消
             </Button>
-            <Button type="submit">添加</Button>
+            <Button type="submit" disabled={validating}>
+              {validating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {validating ? '验证中...' : '添加'}
+            </Button>
           </div>
         </form>
       </DialogContent>
