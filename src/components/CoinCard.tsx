@@ -5,12 +5,12 @@ import { Badge } from '@/components/ui/badge';
 import { AlertBadge } from './AlertBadge';
 import { AlertBanner } from './AlertBanner';
 import { WhaleSignalBadge } from './WhaleSignalBadge';
+import { TradingViewChart } from './TradingViewChart';
 import { MetricItem } from './MetricItem';
 import { Trash2, DollarSign, TrendingUp, Activity, Clock, BarChart3, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { removeCoin } from '@/utils/storage';
 import { toast } from 'sonner';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 interface CoinCardProps {
   data: MonitorDataWithHistory;
@@ -49,32 +49,10 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
   };
 
   const handleRemove = () => {
-    try {
-      removeCoin(data.coin.base);
-      toast.success(`已移除 ${data.coin.base}`);
-      onRemove();
-    } catch (error) {
-      toast.error('移除失败');
-    }
+    removeCoin(data.coin.base);
+    toast.success(`已移除 ${data.coin.base}`);
+    onRemove();
   };
-
-  // 过滤和优化图表数据显示
-  const chartData = data.history
-    .filter((_, index) => index % 3 === 0 || index === data.history.length - 1) // 每3个点显示1个，减少X轴拥挤
-    .map(point => {
-      const cvdValue = point.cvd ? point.cvd / 1_000 : 0;
-      console.log(`${data.coin.base} 图表数据点:`, {
-        time: formatTime(point.timestamp),
-        price: point.price,
-        cvd: cvdValue,
-        rawCvd: point.cvd
-      });
-      return {
-        time: formatTime(point.timestamp),
-        price: point.price,
-        cvd: cvdValue,
-      };
-    });
 
   const borderColor = {
     STRONG: 'border-l-alert-strong',
@@ -116,61 +94,8 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
 
         {data.whaleSignal && <WhaleSignalBadge signal={data.whaleSignal} />}
 
-        {chartData.length > 1 && (
-          <div className="h-48 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 10 }}
-                  stroke="hsl(var(--muted-foreground))"
-                  interval="preserveStartEnd"
-                  minTickGap={30}
-                />
-                <YAxis
-                  yAxisId="left"
-                  tick={{ fontSize: 10, fill: '#f97316' }}
-                  stroke="#f97316"
-                  label={{ value: 'CVD (K)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#f97316' }}
-                />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={{ fontSize: 10, fill: '#a855f7' }}
-                  stroke="#a855f7"
-                  label={{ value: '价格', angle: 90, position: 'insideRight', fontSize: 10, fill: '#a855f7' }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '6px',
-                    fontSize: '12px',
-                  }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px' }} />
-                <Line
-                  yAxisId="left"
-                  type="monotone"
-                  dataKey="cvd"
-                  stroke="#f97316"
-                  strokeWidth={2.5}
-                  dot={false}
-                  name="CVD(K)"
-                />
-                <Line
-                  yAxisId="right"
-                  type="monotone"
-                  dataKey="price"
-                  stroke="#a855f7"
-                  strokeWidth={2}
-                  strokeDasharray="5 5"
-                  dot={false}
-                  name="价格"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+        {data.history.length > 1 && (
+          <TradingViewChart data={data.history} symbol={data.coin.base} />
         )}
 
         <div className="grid grid-cols-2 gap-3">
