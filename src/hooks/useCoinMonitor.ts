@@ -91,9 +91,11 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
           previousOI.sumOpenInterestValue
         );
 
-        // 计算CVD变化
+        // 计算CVD变化 - cvdHistory是按时间升序排列的
         const currentCVD = cvdHistory.length > 0 ? cvdHistory[cvdHistory.length - 1].cvd : 0;
-        const previousCVD = cvdHistory.length > 1 ? cvdHistory[0].cvd : currentCVD;
+        // 5分钟前的CVD值（假设每3分钟一个点，5分钟大约是2个点）
+        const previousCVDIndex = Math.max(0, cvdHistory.length - 3);
+        const previousCVD = cvdHistory.length > 2 ? cvdHistory[previousCVDIndex].cvd : currentCVD;
         const cvdChangePercent = calculatePercentageChange(currentCVD, previousCVD);
 
         // 检测庄家信号

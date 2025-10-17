@@ -18,28 +18,49 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
     const date = new Date(timestamp);
     if (frame === '15m') {
       return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-    } else {
+    } else if (frame === '1h') {
       return date.toLocaleString('zh-CN', { 
         month: '2-digit', 
         day: '2-digit', 
-        hour: '2-digit', 
-        minute: '2-digit' 
+        hour: '2-digit'
+      }).replace(/\//g, '-').replace(/\s/g, ' ');
+    } else {
+      return date.toLocaleString('zh-CN', { 
+        month: '2-digit', 
+        day: '2-digit'
       }).replace(/\//g, '-');
     }
   };
 
   // 根据时间周期聚合数据
   const aggregateData = (rawData: HistoricalDataPoint[], frame: TimeFrame) => {
-    const interval = frame === '15m' ? 5 : frame === '1h' ? 20 : 80; // 3分钟 * interval
-    const result = [];
+    if (rawData.length === 0) return [];
     
-    for (let i = 0; i < rawData.length; i += interval) {
-      const chunk = rawData.slice(i, i + interval);
-      if (chunk.length === 0) continue;
-      
-      // 使用最后一个点的数据（最新）
-      const lastPoint = chunk[chunk.length - 1];
-      result.push(lastPoint);
+    // 根据时间框架确定聚合间隔
+    const intervalMinutes = frame === '15m' ? 5 : frame === '1h' ? 20 : 80;
+    const intervalMs = intervalMinutes * 60 * 1000;
+    
+    const result: HistoricalDataPoint[] = [];
+    let currentBucket: HistoricalDataPoint[] = [];
+    let bucketStartTime = rawData[0].timestamp;
+    
+    for (const point of rawData) {
+      // 如果当前点超出了bucket的时间范围，保存当前bucket并开始新bucket
+      if (point.timestamp - bucketStartTime >= intervalMs) {
+        if (currentBucket.length > 0) {
+          // 使用最后一个点作为这个时间段的代表
+          result.push(currentBucket[currentBucket.length - 1]);
+        }
+        currentBucket = [point];
+        bucketStartTime = point.timestamp;
+      } else {
+        currentBucket.push(point);
+      }
+    }
+    
+    // 添加最后一个bucket
+    if (currentBucket.length > 0) {
+      result.push(currentBucket[currentBucket.length - 1]);
     }
     
     return result;
@@ -50,11 +71,17 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
   const chartData = aggregatedData.map((point) => ({
     time: formatTime(point.timestamp, timeFrame),
     价格: point.price,
-    CVD: point.cvd ? point.cvd / 1000 : 0,
+    CVD: point.cvd / 1000, // 转换为K单位
     fullTime: point.timestamp,
   }));
 
-  if (chartData.length === 0) return null;
+  if (chartData.length === 0) {
+    return (
+      <div className="w-full h-96 flex items-center justify-center bg-card/50 rounded-xl border border-border/50">
+        <p className="text-muted-foreground">暂无数据，正在收集...</p>
+      </div>
+    );
+  }
 
   // 计算CVD的最大最小值用于颜色渐变
   const cvdValues = chartData.map(d => d.CVD);
@@ -160,8 +187,8 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
               fontSize={11}
               tickLine={false}
               axisLine={{ stroke: 'hsl(var(--border))', strokeWidth: 1 }}
-              interval="preserveStartEnd"
-              minTickGap={50}
+              interval={Math.floor(chartData.length / 8)} // 显示约8个刻度
+              minTickGap={30}
             />
             <YAxis
               yAxisId="left"
