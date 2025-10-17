@@ -237,7 +237,23 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
     const prevCvd = prevCvdData?.cvd ? parseFloat(prevCvdData.cvd) : 0;
     const cumulativeCvd = prevCvd + cvd;
 
-    // 存储CVD数据
+    // 获取最新 OI（5m 聚合）并与CVD一起存储
+    let openInterest: number | null = null;
+    let openInterestValue: number | null = null;
+    try {
+      const oiRes = await fetchWithRetry(
+        `${BINANCE_API_BASE}/futures/data/openInterestHist?symbol=${encodedSymbol}&period=5m&limit=1`
+      );
+      const oiArr = await oiRes.json();
+      if (Array.isArray(oiArr) && oiArr.length > 0) {
+        openInterest = parseFloat(oiArr[0].sumOpenInterest);
+        openInterestValue = parseFloat(oiArr[0].sumOpenInterestValue);
+      }
+    } catch (e) {
+      console.warn(`  OI fetch failed for ${symbol}:`, e);
+    }
+
+    // 存储CVD + OI 数据
     const { error: cvdError } = await supabase
       .from('cvd_data')
       .insert({
@@ -245,24 +261,36 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         timestamp: latestTimestamp,
         cvd: cumulativeCvd,
         price: latestPrice,
+        open_interest: openInterest,
+        open_interest_value: openInterestValue,
       });
 
     if (cvdError) {
       throw cvdError;
     }
 
-    // 获取上一个OI值计算变化率
-    const { data: prevOIData } = await supabase
-      .from('cvd_data')
-      .select('price')
-      .eq('symbol', symbol)
-      .order('timestamp', { ascending: false })
-      .limit(3)
-      .maybeSingle();
-
+    // 计算 OI 变化率（基于最近3个含OI的数据点，约9分钟）
     let oiChangePercent = 0;
-    // 这里简化处理，实际应该存储OI历史
-    
+    try {
+      const { data: oiRows } = await supabase
+        .from('cvd_data')
+        .select('open_interest')
+        .eq('symbol', symbol)
+        .not('open_interest', 'is', null)
+        .order('timestamp', { ascending: false })
+        .limit(3);
+
+      if (oiRows && oiRows.length >= 3) {
+        const oiNow = parseFloat(oiRows[0].open_interest as any);
+        const oiPrev = parseFloat(oiRows[2].open_interest as any);
+        if (isFinite(oiNow) && isFinite(oiPrev) && Math.abs(oiPrev) > 0) {
+          oiChangePercent = ((oiNow - oiPrev) / Math.abs(oiPrev)) * 100;
+        }
+      }
+    } catch (e) {
+      console.warn(`  OI change calc failed for ${symbol}:`, e);
+    }
+
     // 计算告警
     const alertType = await determineAlert(
       symbol,
