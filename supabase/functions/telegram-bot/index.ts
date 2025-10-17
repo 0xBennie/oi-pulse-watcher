@@ -83,21 +83,28 @@ serve(async (req) => {
     console.log(`Message from ${username} (${userId}): ${text}`);
 
     // 处理命令
-    if (text.startsWith('/start')) {
-      await sendTelegramMessage(
-        botToken,
-        chatId,
-        `👋 欢迎使用币对监控Bot！
+    if (text.startsWith('/start') || text.startsWith('/help') || text === '/') {
+      const helpMessage = `👋 欢迎使用币对监控Bot！
 
-命令列表：
-/subscribe - 订阅所有监控币对的警报
+📋 命令列表：
+
+📊 数据查询
+/stats [周期] - 查看OI涨幅榜
+  示例：/stats 30m
+  支持：5m, 15m, 30m, 1h, 4h, 24h
+
+/list - 查看监控的币对列表
+/price 币对 - 查询实时价格
+  示例：/price BTCUSDT
+
+🔔 订阅管理  
+/subscribe - 订阅所有警报通知
 /unsubscribe - 取消订阅
 /status - 查看订阅状态
-/list - 查看当前监控的币对
-/price SYMBOL - 查询币对价格（示例：/price BTCUSDT）
 
-订阅后，当监控的币对出现强烈信号（如强势突破、顶部背离等）时，会自动推送消息给你！`
-      );
+💡 提示：直接输入 / 即可查看此菜单`;
+
+      await sendTelegramMessage(botToken, chatId, helpMessage);
 
       // 记录用户
       await supabase.from('telegram_users').upsert({
