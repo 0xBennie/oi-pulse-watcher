@@ -339,7 +339,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
       console.log(`  🚨 ${symbol}: Alert=${alertResult.alertType}, 价格变化=${alertResult.priceChangePercent.toFixed(2)}%`);
     }
 
-    console.log(`  ✓ ${symbol}: CVD=${cumulativeCvd.toFixed(2)}, Price=$${latestPrice}`);
+    console.log(`  ✓ ${symbol}: CVD=${currentCvd.toFixed(2)}, Price=$${latestPrice}`);
 
   } catch (error) {
     console.error(`  ✗ Failed to process ${symbol}:`, error);
