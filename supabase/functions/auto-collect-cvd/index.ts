@@ -269,7 +269,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
       throw cvdError;
     }
 
-    // 计算 OI 变化率（基于最近3个含OI的数据点，约9分钟）
+    // 计算 OI 变化率（基于最近3个含OI的数据点，约4-6分钟）
     let oiChangePercent = 0;
     try {
       const { data: oiRows } = await supabase
@@ -286,13 +286,15 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         if (isFinite(oiNow) && isFinite(oiPrev) && Math.abs(oiPrev) > 0) {
           oiChangePercent = ((oiNow - oiPrev) / Math.abs(oiPrev)) * 100;
         }
+      } else {
+        console.log(`  ⏭️ ${symbol}: OI 数据不足（${oiRows?.length || 0}/3），跳过 OI 计算`);
       }
     } catch (e) {
       console.warn(`  OI change calc failed for ${symbol}:`, e);
     }
 
-    // 计算告警
-    const alertType = await determineAlert(
+    // 计算告警（返回包含价格变化率的对象）
+    const alertResult = await determineAlert(
       symbol,
       cvd,
       cumulativeCvd,
@@ -301,7 +303,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
       supabase
     );
 
-    if (alertType !== 'NONE') {
+    if (alertResult.alertType !== 'NONE') {
       // 冷却机制：检查最近15分钟内是否已有相同类型警报
       const fifteenMinutesAgo = Date.now() - 15 * 60 * 1000;
 
@@ -309,24 +311,24 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         .from('alerts')
         .select('id')
         .eq('symbol', symbol)
-        .eq('alert_type', alertType)
+        .eq('alert_type', alertResult.alertType)
         .gte('created_at', new Date(fifteenMinutesAgo).toISOString())
         .limit(1)
         .maybeSingle();
 
       if (recentAlert) {
-        console.log(`  ⏸️ ${symbol}: ${alertType} 在冷却中，跳过`);
+        console.log(`  ⏸️ ${symbol}: ${alertResult.alertType} 在冷却中，跳过`);
         return;
       }
 
-      // 保存告警到数据库
+      // 保存告警到数据库（使用实际计算的价格变化率）
       await supabase.from('alerts').insert({
         symbol,
-        alert_type: alertType,
+        alert_type: alertResult.alertType,
         price: latestPrice,
         cvd: cumulativeCvd,
         cvd_change_percent: (cvd / Math.abs(prevCvd || 1)) * 100,
-        price_change_percent: 0, // 这里需要历史价格数据
+        price_change_percent: alertResult.priceChangePercent,
         oi_change_percent: oiChangePercent,
         details: {
           trades_count: trades.length,
@@ -334,7 +336,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         }
       });
       
-      console.log(`  🚨 ${symbol}: Alert=${alertType}`);
+      console.log(`  🚨 ${symbol}: Alert=${alertResult.alertType}, 价格变化=${alertResult.priceChangePercent.toFixed(2)}%`);
     }
 
     console.log(`  ✓ ${symbol}: CVD=${cumulativeCvd.toFixed(2)}, Price=$${latestPrice}`);
@@ -352,7 +354,7 @@ async function determineAlert(
   currentPrice: number,
   oiChangePercent: number,
   supabase: any
-): Promise<string> {
+): Promise<{ alertType: string; priceChangePercent: number }> {
   try {
     // 获取历史数据用于计算变化率和背离
     const { data: recentData } = await supabase
@@ -363,10 +365,10 @@ async function determineAlert(
       .limit(61); // 当前+60个历史点
 
     if (!recentData || recentData.length < 3) {
-      return 'NONE';
+      return { alertType: 'NONE', priceChangePercent: 0 };
     }
 
-    // 计算CVD变化率（最近3个点，约9分钟）
+    // 计算CVD变化率（最近3个点，约4-6分钟）
     const currentCVD = parseFloat(recentData[0].cvd);
     const prevCVD = parseFloat(recentData[2].cvd);
     const cvdChangePercent = ((currentCVD - prevCVD) / Math.abs(prevCVD || 1)) * 100;
@@ -374,32 +376,32 @@ async function determineAlert(
     // 过滤异常值（CVD变化超过±100%通常是数据异常）
     if (Math.abs(cvdChangePercent) > 100) {
       console.warn(`  ⚠️ ${symbol}: CVD变化异常 ${cvdChangePercent.toFixed(2)}%，跳过`);
-      return 'NONE';
+      return { alertType: 'NONE', priceChangePercent: 0 };
     }
 
-    // 计算价格变化率
+    // 计算价格变化率（2分钟窗口：第0点和第1点）
     const priceNow = parseFloat(recentData[0].price);
-    const pricePrev = parseFloat(recentData[2].price);
+    const pricePrev = parseFloat(recentData[1].price);
     const priceChangePercent = ((priceNow - pricePrev) / pricePrev) * 100;
 
     // 1. STRONG_BREAKOUT: CVD↑≥8%、价↑≥3%（暂时禁用OI检查）
     if (cvdChangePercent >= 8 && priceChangePercent >= 3) {
-      return 'STRONG_BREAKOUT';
+      return { alertType: 'STRONG_BREAKOUT', priceChangePercent };
     }
 
     // 2. ACCUMULATION: CVD↑≥15%、价格横盘±0.5%（暂时禁用OI检查）
     if (cvdChangePercent >= 15 && Math.abs(priceChangePercent) <= 0.5) {
-      return 'ACCUMULATION';
+      return { alertType: 'ACCUMULATION', priceChangePercent };
     }
 
     // 3. DISTRIBUTION_WARN: CVD↓≥3%、价↑≥1%
     if (cvdChangePercent <= -3 && priceChangePercent >= 1) {
-      return 'DISTRIBUTION_WARN';
+      return { alertType: 'DISTRIBUTION_WARN', priceChangePercent };
     }
 
     // 4. SHORT_CONFIRM: CVD↓≥5%、价↓≥2%（暂时禁用OI检查）
     if (cvdChangePercent <= -5 && priceChangePercent <= -2) {
-      return 'SHORT_CONFIRM';
+      return { alertType: 'SHORT_CONFIRM', priceChangePercent };
     }
 
     // 5. TOP_DIVERGENCE: 近60根内价格创新高但CVD未创新高
@@ -412,13 +414,13 @@ async function determineAlert(
       
       // 如果当前价格是新高（≥99.9%），但CVD显著背离（<90%）
       if (priceNow >= maxPrice * 0.999 && currentCVD < maxCVD * 0.90) {
-        return 'TOP_DIVERGENCE';
+        return { alertType: 'TOP_DIVERGENCE', priceChangePercent };
       }
     }
 
-    return 'NONE';
+    return { alertType: 'NONE', priceChangePercent };
   } catch (error) {
     console.error(`Alert calculation error for ${symbol}:`, error);
-    return 'NONE';
+    return { alertType: 'NONE', priceChangePercent: 0 };
   }
 }
