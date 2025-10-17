@@ -61,6 +61,8 @@ export type Database = {
           created_at: string | null
           cvd: number
           id: string
+          open_interest: number | null
+          open_interest_value: number | null
           price: number
           symbol: string
           timestamp: number
@@ -69,6 +71,8 @@ export type Database = {
           created_at?: string | null
           cvd: number
           id?: string
+          open_interest?: number | null
+          open_interest_value?: number | null
           price: number
           symbol: string
           timestamp: number
@@ -77,6 +81,8 @@ export type Database = {
           created_at?: string | null
           cvd?: number
           id?: string
+          open_interest?: number | null
+          open_interest_value?: number | null
           price?: number
           symbol?: string
           timestamp?: number
