@@ -36,8 +36,9 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
   const aggregateData = (rawData: HistoricalDataPoint[], frame: TimeFrame) => {
     if (rawData.length === 0) return [];
     
-    // 根据时间框架确定聚合间隔
-    const intervalMinutes = frame === '3m' ? 1 : frame === '15m' ? 5 : frame === '1h' ? 20 : 80;
+    // 根据时间框架确定聚合间隔（分钟）
+    // 3m: 3分钟, 15m: 15分钟, 1h: 60分钟, 4h: 240分钟
+    const intervalMinutes = frame === '3m' ? 3 : frame === '15m' ? 15 : frame === '1h' ? 60 : 240;
     const intervalMs = intervalMinutes * 60 * 1000;
     
     const result: HistoricalDataPoint[] = [];

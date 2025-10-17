@@ -4,8 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Trash2, Plus, Power, PowerOff } from 'lucide-react';
+import { Trash2, Plus, Power, PowerOff, Eraser } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { cleanupInvalidCoins } from '@/utils/cleanupInvalidCoins';
 
 interface MonitoredCoin {
   id: string;
@@ -161,7 +162,7 @@ export function CoinManagement() {
   };
 
   const backfillAllCoins = async () => {
-    if (!confirm('确定要回填所有币对的24小时历史数据吗？这可能需要几分钟时间。')) {
+    if (!confirm('确定要回填所有币对的7天历史数据吗？这可能需要几分钟时间。')) {
       return;
     }
 
@@ -178,7 +179,7 @@ export function CoinManagement() {
         const { data, error } = await supabase.functions.invoke('backfill-cvd-history', {
           body: { 
             symbol: coin.symbol,
-            hoursBack: 24 // 回填24小时
+            hoursBack: 168 // 回填7天 = 7 * 24小时
           }
         });
 
@@ -201,6 +202,20 @@ export function CoinManagement() {
     toast.success(`回填完成！成功: ${successCount}, 失败: ${failCount}`);
   };
 
+  const handleCleanupInvalid = async () => {
+    if (!confirm('确定要清理所有无效币对吗？（在币安合约市场不存在的币对将被删除）')) {
+      return;
+    }
+
+    setLoading(true);
+    const result = await cleanupInvalidCoins();
+    setLoading(false);
+
+    if (result.success) {
+      fetchCoins(); // 刷新列表
+    }
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -218,7 +233,16 @@ export function CoinManagement() {
               variant="default"
               size="sm"
             >
-              回填24h历史数据
+              回填7天历史数据
+            </Button>
+            <Button 
+              onClick={handleCleanupInvalid} 
+              disabled={loading || coins.length === 0}
+              variant="destructive"
+              size="sm"
+            >
+              <Eraser className="w-4 h-4 mr-1" />
+              清理无效币对
             </Button>
             <Button 
               onClick={clearAllCoins} 
@@ -314,9 +338,11 @@ export function CoinManagement() {
           <p className="mb-1">💡 提示：</p>
           <ul className="list-disc list-inside space-y-1 pl-2">
             <li>币对格式必须与币安期货一致，必须以USDT结尾（如: BTCUSDT, ETHUSDT）</li>
-            <li>新增币对后，点击"回填24h历史数据"按钮来获取过往数据</li>
+            <li>添加时会自动验证币对在币安合约市场是否存在</li>
+            <li>新增币对后，点击"回填7天历史数据"按钮来获取过往数据</li>
             <li>定时任务每1分钟自动执行一次，持续积累数据</li>
             <li>可以随时暂停/启用单个币对的监控</li>
+            <li>点击"清理无效币对"可自动删除在币安已下线的合约</li>
             <li>删除币对不会删除历史CVD数据</li>
           </ul>
         </div>

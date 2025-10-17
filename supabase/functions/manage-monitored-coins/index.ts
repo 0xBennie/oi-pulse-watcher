@@ -72,6 +72,27 @@ serve(async (req) => {
           );
         }
 
+        // Validate if symbol exists on Binance Futures
+        try {
+          const binanceResponse = await fetch(
+            `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+          );
+          
+          if (!binanceResponse.ok) {
+            console.error(`Binance validation failed for ${symbol}: ${binanceResponse.status}`);
+            return new Response(
+              JSON.stringify({ error: `该币对 ${symbol} 在币安合约市场不存在或未上线` }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+        } catch (error) {
+          console.error('Error validating symbol with Binance:', error);
+          return new Response(
+            JSON.stringify({ error: '无法验证币对有效性，请稍后重试' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
         result = await supabase
           .from('monitored_coins')
           .insert({
@@ -88,6 +109,72 @@ serve(async (req) => {
           );
         }
         break;
+      }
+
+      case 'cleanup_invalid': {
+        // 清理所有无效币对（在Binance上不存在合约的）
+        console.log('Starting cleanup of invalid coins...');
+        
+        // 获取所有监控币对
+        const { data: coins, error: fetchError } = await supabase
+          .from('monitored_coins')
+          .select('id, symbol');
+
+        if (fetchError) {
+          console.error('Error fetching coins:', fetchError);
+          return new Response(
+            JSON.stringify({ error: 'Failed to fetch coins' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const invalidCoinIds = [];
+        
+        // 检查每个币对
+        for (const coin of coins || []) {
+          try {
+            const binanceResponse = await fetch(
+              `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${coin.symbol}`
+            );
+            
+            if (!binanceResponse.ok) {
+              console.log(`Found invalid coin: ${coin.symbol}`);
+              invalidCoinIds.push(coin.id);
+            }
+          } catch (error) {
+            console.error(`Error checking ${coin.symbol}:`, error);
+          }
+          
+          // 添加小延迟避免频率限制
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        // 删除所有无效币对
+        if (invalidCoinIds.length > 0) {
+          const { error: deleteError } = await supabase
+            .from('monitored_coins')
+            .delete()
+            .in('id', invalidCoinIds);
+
+          if (deleteError) {
+            console.error('Error deleting invalid coins:', deleteError);
+            return new Response(
+              JSON.stringify({ error: 'Failed to delete invalid coins' }),
+              { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+
+          console.log(`Cleaned up ${invalidCoinIds.length} invalid coins`);
+        }
+
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            cleaned: invalidCoinIds.length,
+            message: `已清理 ${invalidCoinIds.length} 个无效币对` 
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
       }
 
       case 'toggle': {
