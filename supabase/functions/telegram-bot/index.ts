@@ -89,20 +89,23 @@ serve(async (req) => {
 📋 命令列表：
 
 📊 数据查询
-/stats [周期] - 查看OI涨幅榜
+/stats [周期] - OI涨幅榜
   示例：/stats 30m
   支持：5m, 15m, 30m, 1h, 4h, 24h
 
-/list - 查看监控的币对列表
-/price 币对 - 查询实时价格
-  示例：/price BTCUSDT
+/coin 币对 - 单币多维度分析
+  示例：/coin BTCUSDT
+  显示：OI变化、资金流入、价格变动
+
+/list - 监控币对列表
+/price 币对 - 实时价格查询
 
 🔔 订阅管理  
-/subscribe - 订阅所有警报通知
+/subscribe - 订阅警报通知
 /unsubscribe - 取消订阅
-/status - 查看订阅状态
+/status - 订阅状态
 
-💡 提示：直接输入 / 即可查看此菜单`;
+💡 输入 / 查看菜单`;
 
       await sendTelegramMessage(botToken, chatId, helpMessage);
 
@@ -309,6 +312,140 @@ serve(async (req) => {
       } catch (error) {
         console.error('Stats error:', error);
         await sendTelegramMessage(botToken, chatId, '❌ 数据查询失败');
+      }
+
+    } else if (text.startsWith('/coin ')) {
+      // 查询单个币种的多维度数据
+      const symbol = text.replace('/coin ', '').trim().toUpperCase();
+      
+      try {
+        // 验证币种是否在监控列表中
+        const { data: coinData } = await supabase
+          .from('monitored_coins')
+          .select('name, symbol')
+          .eq('symbol', symbol)
+          .maybeSingle();
+
+        if (!coinData) {
+          await sendTelegramMessage(botToken, chatId, `❌ 币种 ${symbol} 不在监控列表中\n\n使用 /list 查看监控币对`);
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取历史CVD数据
+        const { data: cvdData } = await supabase
+          .from('cvd_data')
+          .select('cvd, price, open_interest, timestamp')
+          .eq('symbol', symbol)
+          .order('timestamp', { ascending: false })
+          .limit(2880);
+
+        if (!cvdData || cvdData.length < 30) {
+          await sendTelegramMessage(botToken, chatId, `❌ ${coinData.name} 数据不足`);
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取24h Binance数据
+        const binanceRes = await fetch(
+          `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+        );
+        const binance24h = binanceRes.ok ? await binanceRes.json() : null;
+
+        // 定义时间维度
+        const periods = [
+          { label: '5m', index: 3 },
+          { label: '15m', index: 9 },
+          { label: '30m', index: 18 },
+          { label: '1h', index: 30 },
+          { label: '4h', index: 120 },
+          { label: '8h', index: 240 },
+          { label: '12h', index: 360 },
+        ];
+
+        const now = cvdData[0];
+        const results = [];
+
+        // 计算各时间维度数据
+        for (const period of periods) {
+          const prev = cvdData[period.index];
+          if (!prev) continue;
+
+          const oiChange = prev.open_interest !== '0' 
+            ? ((parseFloat(now.open_interest) - parseFloat(prev.open_interest)) / Math.abs(parseFloat(prev.open_interest))) * 100
+            : 0;
+          
+          const cvdChange = prev.cvd !== '0'
+            ? ((parseFloat(now.cvd) - parseFloat(prev.cvd)) / Math.abs(parseFloat(prev.cvd))) * 100
+            : 0;
+
+          const priceChange = prev.price !== '0'
+            ? ((parseFloat(now.price) - parseFloat(prev.price)) / parseFloat(prev.price)) * 100
+            : 0;
+
+          results.push({
+            period: period.label,
+            oi: parseFloat(now.open_interest),
+            oiChange,
+            cvd: parseFloat(now.cvd),
+            cvdChange,
+            price: parseFloat(now.price),
+            priceChange,
+          });
+        }
+
+        // 添加24h数据
+        if (binance24h) {
+          results.push({
+            period: '24h',
+            oi: 0,
+            oiChange: 0,
+            cvd: 0,
+            cvdChange: 0,
+            price: parseFloat(binance24h.lastPrice),
+            priceChange: parseFloat(binance24h.priceChangePercent),
+          });
+        }
+
+        // 格式化输出
+        const formatNum = (n: number) => {
+          const sign = n >= 0 ? '+' : '';
+          return `${sign}${n.toFixed(2)}%`;
+        };
+
+        const formatValue = (v: number) => {
+          if (v >= 1000000) return `${(v / 1000000).toFixed(2)}m`;
+          if (v >= 1000) return `${(v / 1000).toFixed(2)}k`;
+          return v.toFixed(2);
+        };
+
+        let message = `🪙 ${coinData.name}\n\n`;
+        
+        // OI变化
+        message += `📊 合约OI变化\n`;
+        results.forEach(r => {
+          const val = r.oi > 0 ? formatValue(r.oi) : '--';
+          message += `${r.period.padEnd(5)} ${val.padEnd(10)} ${formatNum(r.oiChange)}\n`;
+        });
+
+        message += `\n💰 资金流入CVD\n`;
+        results.forEach(r => {
+          const val = formatValue(Math.abs(r.cvd));
+          const prefix = r.cvd >= 0 ? '+' : '-';
+          message += `${r.period.padEnd(5)} ${prefix}${val.padEnd(9)} ${formatNum(r.cvdChange)}\n`;
+        });
+
+        message += `\n💵 价格变动\n`;
+        results.forEach(r => {
+          message += `${r.period.padEnd(5)} $${r.price.toFixed(4).padEnd(9)} ${formatNum(r.priceChange)}\n`;
+        });
+
+        await sendTelegramMessage(botToken, chatId, message);
+      } catch (error) {
+        console.error('Coin detail error:', error);
+        await sendTelegramMessage(botToken, chatId, '❌ 查询失败');
       }
 
     } else if (text.startsWith('/price ')) {
