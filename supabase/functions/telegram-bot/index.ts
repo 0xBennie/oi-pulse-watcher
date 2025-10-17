@@ -370,17 +370,31 @@ serve(async (req) => {
 
         // 计算各时间维度数据
         for (const period of periods) {
+          if (cvdData.length < period.index) continue;
+          
+          // 获取区间内的数据点
+          const rangeData = cvdData.slice(0, period.index + 1);
           const prev = cvdData[period.index];
-          if (!prev) continue;
-
+          
+          // OI变化：区间首尾对比
           const oiChange = prev.open_interest !== '0' 
             ? ((parseFloat(now.open_interest) - parseFloat(prev.open_interest)) / Math.abs(parseFloat(prev.open_interest))) * 100
             : 0;
           
+          // CVD累计变化：区间内的总增量
+          let cvdTotal = 0;
+          for (let i = 0; i < rangeData.length - 1; i++) {
+            const curr = parseFloat(rangeData[i].cvd);
+            const next = parseFloat(rangeData[i + 1].cvd);
+            cvdTotal += (curr - next); // 累计增量
+          }
+          
+          // CVD变化率：相对于起始值
           const cvdChange = prev.cvd !== '0'
-            ? ((parseFloat(now.cvd) - parseFloat(prev.cvd)) / Math.abs(parseFloat(prev.cvd))) * 100
+            ? (cvdTotal / Math.abs(parseFloat(prev.cvd))) * 100
             : 0;
 
+          // 价格变化：区间首尾对比
           const priceChange = prev.price !== '0'
             ? ((parseFloat(now.price) - parseFloat(prev.price)) / parseFloat(prev.price)) * 100
             : 0;
@@ -389,7 +403,7 @@ serve(async (req) => {
             period: period.label,
             oi: parseFloat(now.open_interest),
             oiChange,
-            cvd: parseFloat(now.cvd),
+            cvd: cvdTotal, // 显示累计值
             cvdChange,
             price: parseFloat(now.price),
             priceChange,
