@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.get-cvd-history]
 verify_jwt = false
+
+[functions.auto-collect-cvd]
+verify_jwt = false
