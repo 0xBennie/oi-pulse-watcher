@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.manage-monitored-coins]
 verify_jwt = false
+
+[functions.backfill-cvd-history]
+verify_jwt = false

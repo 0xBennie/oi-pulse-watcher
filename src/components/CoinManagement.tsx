@@ -160,6 +160,47 @@ export function CoinManagement() {
     setLoading(false);
   };
 
+  const backfillAllCoins = async () => {
+    if (!confirm('确定要回填所有币对的24小时历史数据吗？这可能需要几分钟时间。')) {
+      return;
+    }
+
+    setLoading(true);
+    const enabledCoins = coins.filter(c => c.enabled);
+    
+    toast.loading(`开始回填 ${enabledCoins.length} 个币对的历史数据...`);
+    
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const coin of enabledCoins) {
+      try {
+        const { data, error } = await supabase.functions.invoke('backfill-cvd-history', {
+          body: { 
+            symbol: coin.symbol,
+            hoursBack: 24 // 回填24小时
+          }
+        });
+
+        if (error) throw error;
+
+        if (data?.success) {
+          successCount++;
+          console.log(`✅ ${coin.symbol}: ${data.dataPoints} 个数据点`);
+        }
+      } catch (error) {
+        failCount++;
+        console.error(`❌ ${coin.symbol} 回填失败:`, error);
+      }
+      
+      // 小延迟避免过载
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    setLoading(false);
+    toast.success(`回填完成！成功: ${successCount}, 失败: ${failCount}`);
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -171,6 +212,14 @@ export function CoinManagement() {
             </CardDescription>
           </div>
           <div className="flex gap-2">
+            <Button 
+              onClick={backfillAllCoins} 
+              disabled={loading || coins.length === 0}
+              variant="default"
+              size="sm"
+            >
+              回填24h历史数据
+            </Button>
             <Button 
               onClick={clearAllCoins} 
               disabled={loading || coins.length === 0}
@@ -264,8 +313,9 @@ export function CoinManagement() {
         <div className="text-xs text-muted-foreground pt-4 border-t">
           <p className="mb-1">💡 提示：</p>
           <ul className="list-disc list-inside space-y-1 pl-2">
-            <li>币对格式必须与币安期货一致（如: BTCUSDT, ETHUSDT）</li>
-            <li>定时任务每1分钟自动执行一次</li>
+            <li>币对格式必须与币安期货一致，必须以USDT结尾（如: BTCUSDT, ETHUSDT）</li>
+            <li>新增币对后，点击"回填24h历史数据"按钮来获取过往数据</li>
+            <li>定时任务每1分钟自动执行一次，持续积累数据</li>
             <li>可以随时暂停/启用单个币对的监控</li>
             <li>删除币对不会删除历史CVD数据</li>
           </ul>
