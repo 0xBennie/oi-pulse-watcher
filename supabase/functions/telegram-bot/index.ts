@@ -164,6 +164,107 @@ serve(async (req) => {
         await sendTelegramMessage(botToken, chatId, `📊 监控中的币对 (${coins.length}个):\n\n${list}`);
       }
 
+    } else if (text.startsWith('/stats')) {
+      // 市场统计数据
+      try {
+        // 获取所有启用的币对
+        const { data: coins } = await supabase
+          .from('monitored_coins')
+          .select('symbol, name')
+          .eq('enabled', true)
+          .limit(10);
+
+        if (!coins || coins.length === 0) {
+          await sendTelegramMessage(botToken, chatId, '❌ 暂无监控币对');
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        // 获取每个币对的多时间周期数据
+        const statsPromises = coins.map(async (coin) => {
+          const symbol = coin.symbol;
+          
+          // 获取CVD历史数据（最近300个点，约5小时）
+          const { data: cvdData } = await supabase
+            .from('cvd_data')
+            .select('cvd, price, open_interest, timestamp')
+            .eq('symbol', symbol)
+            .order('timestamp', { ascending: false })
+            .limit(300);
+
+          if (!cvdData || cvdData.length < 30) {
+            return null; // 数据不足
+          }
+
+          // 获取24小时Binance数据
+          const binanceRes = await fetch(
+            `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+          );
+          const binance24h = binanceRes.ok ? await binanceRes.json() : null;
+
+          // 计算各时间周期变化率
+          const now = cvdData[0];
+          const m5 = cvdData[3] || cvdData[2];   // ~5分钟前
+          const m15 = cvdData[9] || cvdData[8];  // ~15分钟前
+          const h1 = cvdData[30] || cvdData[29]; // ~1小时前
+          const h4 = cvdData[120] || cvdData[119]; // ~4小时前
+          const h24 = cvdData[144] || cvdData[143]; // ~24小时前
+          const h48 = cvdData[288] || cvdData[287]; // ~48小时前
+
+          const calc = (curr: any, prev: any, field: string) => {
+            if (!prev || !curr) return 0;
+            const c = parseFloat(curr[field]);
+            const p = parseFloat(prev[field]);
+            return p !== 0 ? ((c - p) / Math.abs(p)) * 100 : 0;
+          };
+
+          return {
+            symbol: coin.name,
+            oi_5m: calc(now, m5, 'open_interest'),
+            oi_15m: calc(now, m15, 'open_interest'),
+            oi_1h: calc(now, h1, 'open_interest'),
+            oi_4h: calc(now, h4, 'open_interest'),
+            oi_24h: calc(now, h24, 'open_interest'),
+            oi_48h: calc(now, h48, 'open_interest'),
+            cvd_5m: calc(now, m5, 'cvd'),
+            cvd_15m: calc(now, m15, 'cvd'),
+            cvd_1h: calc(now, h1, 'cvd'),
+            price_5m: calc(now, m5, 'price'),
+            price_15m: calc(now, m15, 'price'),
+            price_1h: calc(now, h1, 'price'),
+            price_24h: binance24h ? parseFloat(binance24h.priceChangePercent) : 0,
+          };
+        });
+
+        const allStats = (await Promise.all(statsPromises)).filter(s => s !== null);
+        
+        // 按OI 1小时涨幅排序
+        allStats.sort((a, b) => Math.abs(b!.oi_1h) - Math.abs(a!.oi_1h));
+
+        // 格式化输出
+        const formatNum = (n: number) => {
+          const sign = n >= 0 ? '+' : '';
+          return `${sign}${n.toFixed(1)}%`;
+        };
+
+        let message = '📊 市场监控数据（按OI涨幅排序）\n\n';
+        
+        allStats.slice(0, 10).forEach((stat, i) => {
+          const s = stat!;
+          message += `${i + 1}️⃣ ${s.symbol}\n`;
+          message += `5m: OI${formatNum(s.oi_5m)} CVD${formatNum(s.cvd_5m)} P${formatNum(s.price_5m)}\n`;
+          message += `15m: OI${formatNum(s.oi_15m)} CVD${formatNum(s.cvd_15m)} P${formatNum(s.price_15m)}\n`;
+          message += `1h: OI${formatNum(s.oi_1h)} CVD${formatNum(s.cvd_1h)} P${formatNum(s.price_1h)}\n`;
+          message += `24h: P${formatNum(s.price_24h)}\n\n`;
+        });
+
+        await sendTelegramMessage(botToken, chatId, message);
+      } catch (error) {
+        console.error('Stats error:', error);
+        await sendTelegramMessage(botToken, chatId, '❌ 数据查询失败');
+      }
+
     } else if (text.startsWith('/price ')) {
       // 查询价格
       const symbol = text.replace('/price ', '').trim().toUpperCase();
