@@ -144,36 +144,14 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
 
     const trades: TradeData[] = await response.json();
 
-    // 计算CVD
+    // 计算CVD (不再存储原始交易数据)
     let cvd = 0;
-    const tradeRecords = [];
     
     for (const trade of trades) {
       const volume = parseFloat(trade.qty);
       const delta = trade.isBuyerMaker ? -volume : volume;
       cvd += delta;
-
-      tradeRecords.push({
-        symbol,
-        timestamp: trade.time,
-        price: parseFloat(trade.price),
-        quantity: volume,
-        is_buyer_maker: trade.isBuyerMaker,
-      });
     }
-
-    // 批量插入交易数据（异步执行，不阻塞主流程）
-    supabase
-      .from('trade_data')
-      .insert(tradeRecords)
-      .then(({ error }: any) => {
-        if (error) {
-          console.error(`  ⚠️ Trade data insert warning for ${symbol}:`, error.message);
-        }
-      })
-      .catch((err: Error) => {
-        console.error(`  ⚠️ Trade data insert error for ${symbol}:`, err);
-      });
 
     // 获取最新价格和时间戳
     const latestPrice = parseFloat(trades[trades.length - 1].price);

@@ -81,32 +81,45 @@ serve(async (req) => {
     console.log(`结束时间: ${new Date(now).toISOString()}`);
 
     while (currentStartTime < now && batchCount < maxBatches) {
-      const url = `${BINANCE_API_BASE}/fapi/v1/aggTrades?symbol=${encodedSymbol}&startTime=${currentStartTime}&limit=1000`;
-      
-      const response = await fetch(url, {
-        signal: AbortSignal.timeout(15000)
-      });
+      try {
+        const url = `${BINANCE_API_BASE}/fapi/v1/aggTrades?symbol=${encodedSymbol}&startTime=${currentStartTime}&limit=1000`;
+        
+        const response = await fetch(url, {
+          signal: AbortSignal.timeout(15000)
+        });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`Binance API error: ${errorText}`);
-        throw new Error('Failed to fetch historical trades');
+        if (!response.ok) {
+          // 处理限速:等待后重试
+          if (response.status === 418 || response.status === 429) {
+            console.log(`⏳ 触发限速,等待10秒后重试...`);
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            continue;
+          }
+          
+          const errorText = await response.text();
+          console.error(`Binance API error: ${errorText}`);
+          throw new Error('Failed to fetch historical trades');
+        }
+
+        const trades: AggTrade[] = await response.json();
+        
+        if (trades.length === 0) {
+          break;
+        }
+
+        allTrades.push(...trades);
+        currentStartTime = trades[trades.length - 1].T + 1;
+        batchCount++;
+        
+        console.log(`批次 ${batchCount}: 获取了 ${trades.length} 条交易,总计 ${allTrades.length} 条`);
+        
+        // 延迟避免触发限速
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error(`批次 ${batchCount + 1} 失败:`, error);
+        // 发生错误时等待后继续
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
-
-      const trades: AggTrade[] = await response.json();
-      
-      if (trades.length === 0) {
-        break;
-      }
-
-      allTrades.push(...trades);
-      currentStartTime = trades[trades.length - 1].T + 1;
-      batchCount++;
-      
-      console.log(`批次 ${batchCount}: 获取了 ${trades.length} 条交易，总计 ${allTrades.length} 条`);
-      
-      // 小延迟避免触发限速
-      await new Promise(resolve => setTimeout(resolve, 200));
     }
 
     console.log(`总共获取 ${allTrades.length} 条历史交易数据`);

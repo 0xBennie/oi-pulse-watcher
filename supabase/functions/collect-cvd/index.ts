@@ -83,31 +83,13 @@ serve(async (req) => {
     const trades: TradeData[] = await response.json();
     console.log(`Fetched ${trades.length} trades for ${symbol}`);
 
-    // 计算CVD
+    // 计算CVD (不再存储原始交易数据,节省数据库空间和避免超时)
     let cvd = 0;
-    const tradeRecords = [];
     
     for (const trade of trades) {
       const volume = parseFloat(trade.qty);
-      const delta = trade.isBuyerMaker ? -volume : volume; // 买单为正，卖单为负
+      const delta = trade.isBuyerMaker ? -volume : volume; // 买单为正,卖单为负
       cvd += delta;
-
-      tradeRecords.push({
-        symbol,
-        timestamp: trade.time,
-        price: parseFloat(trade.price),
-        quantity: volume,
-        is_buyer_maker: trade.isBuyerMaker,
-      });
-    }
-
-    // 存储交易数据（批量插入）
-    const { error: tradeError } = await supabase
-      .from('trade_data')
-      .insert(tradeRecords);
-
-    if (tradeError) {
-      console.error('Error inserting trade data:', tradeError);
     }
 
     // 获取最新价格和时间戳
