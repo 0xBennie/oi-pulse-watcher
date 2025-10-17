@@ -105,31 +105,45 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
         // Update historical data - 合并CVD历史数据
         const timestamp = Date.now();
         
-        // 如果有CVD历史数据，使用它；否则创建新的数据点
+        // 创建当前数据点
+        const newDataPoint: HistoricalDataPoint = {
+          timestamp,
+          price: currentPrice,
+          openInterest: currentOI.sumOpenInterestValue,
+          cvd: currentCVD,
+        };
+        
         let updatedHistory: HistoricalDataPoint[];
         
         if (cvdHistory.length > 0) {
           // 将CVD历史转换为HistoricalDataPoint格式
-          updatedHistory = cvdHistory.map(point => ({
+          const historicalPoints = cvdHistory.map(point => ({
             timestamp: point.timestamp,
             price: point.price,
-            openInterest: currentOI.sumOpenInterestValue, // 使用当前OI作为占位
+            openInterest: currentOI.sumOpenInterestValue,
             cvd: point.cvd,
           }));
+          
+          // 检查最新的历史数据点是否已经包含当前时间点
+          const lastHistoricalTimestamp = historicalPoints.length > 0 
+            ? historicalPoints[historicalPoints.length - 1].timestamp 
+            : 0;
+          
+          // 如果当前数据点比历史数据新（超过1分钟），则追加
+          if (timestamp - lastHistoricalTimestamp > 60000) {
+            updatedHistory = [...historicalPoints, newDataPoint];
+          } else {
+            updatedHistory = historicalPoints;
+          }
         } else {
-          // 如果没有CVD数据，使用传统方式
-          const newDataPoint: HistoricalDataPoint = {
-            timestamp,
-            price: currentPrice,
-            openInterest: currentOI.sumOpenInterestValue,
-          };
-
+          // 如果没有CVD数据，从已有历史开始累积
           const existingHistory = historicalDataRef.current[coin.base] || [];
           updatedHistory = [...existingHistory, newDataPoint];
-
-          if (updatedHistory.length > MAX_HISTORY_POINTS) {
-            updatedHistory.shift();
-          }
+        }
+        
+        // 限制历史点数量
+        if (updatedHistory.length > MAX_HISTORY_POINTS) {
+          updatedHistory = updatedHistory.slice(-MAX_HISTORY_POINTS);
         }
 
         historicalDataRef.current[coin.base] = updatedHistory;
