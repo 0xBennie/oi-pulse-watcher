@@ -279,16 +279,24 @@ serve(async (req) => {
           return `${(v * 1000).toFixed(0)}K`;
         };
 
-        let message = `📊 OI-${label}涨幅榜\n\n`;
+        const pad = (str: string, len: number) => str.padEnd(len, ' ');
+
+        let message = `📊 ${label}涨幅榜\n\n`;
+        message += `币种       OI      CVD     价格${needsBinance ? '    交易额' : ''}\n`;
+        message += `${'─'.repeat(needsBinance ? 40 : 32)}\n`;
         
         allStats.slice(0, 15).forEach((stat, i) => {
           const s = stat!;
-          const volStr = needsBinance && s.volume > 0 ? ` ${formatVol(s.volume)}` : '';
-          message += `${i + 1}. ${s.symbol}${volStr}\n`;
-          message += `   OI ${formatNum(s.oi)}  CVD ${formatNum(s.cvd)}  P ${formatNum(s.price)}\n\n`;
+          const name = pad(s.symbol, 8);
+          const oi = pad(formatNum(s.oi), 8);
+          const cvd = pad(formatNum(s.cvd), 8);
+          const price = pad(formatNum(s.price), 8);
+          const volStr = needsBinance && s.volume > 0 ? formatVol(s.volume) : '';
+          
+          message += `${name}${oi}${cvd}${price}${volStr}\n`;
         });
 
-        message += `💡 使用示例：\n/stats 5m  /stats 30m  /stats 1h`;
+        message += `\n💡 /stats 5m | 15m | 30m | 1h | 4h | 24h`;
 
         await sendTelegramMessage(botToken, chatId, message);
       } catch (error) {
