@@ -5,12 +5,17 @@ import { CoinManagement } from '@/components/CoinManagement';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { RefreshCw, Activity, AlertTriangle, Clock } from 'lucide-react';
+import { RefreshCw, Activity, AlertTriangle, Clock, Send } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
   const { monitorData, loading, lastUpdate, coins, refresh } = useCoinMonitor();
   const [selectedCoin, setSelectedCoin] = useState<string>('');
+  const [unsentCount, setUnsentCount] = useState<number>(0);
+  const [pushing, setPushing] = useState(false);
+  const { toast } = useToast();
 
   // 自动选择第一个币种
   useEffect(() => {
@@ -21,6 +26,54 @@ const Index = () => {
       }
     }
   }, [monitorData]);
+
+  // 获取未发送警报数量
+  useEffect(() => {
+    const fetchUnsentCount = async () => {
+      const { count } = await supabase
+        .from('alerts')
+        .select('*', { count: 'exact', head: true })
+        .is('telegram_sent', null);
+      
+      setUnsentCount(count || 0);
+    };
+
+    fetchUnsentCount();
+    const interval = setInterval(fetchUnsentCount, 30000); // 每30秒更新一次
+    return () => clearInterval(interval);
+  }, []);
+
+  // 手动触发Telegram推送
+  const handlePushAlerts = async () => {
+    setPushing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('telegram-alert');
+      
+      if (error) throw error;
+      
+      toast({
+        title: '✅ 推送成功',
+        description: `已发送 ${data?.sent || 0} 条消息到 ${data?.subscribers || 0} 个订阅者`,
+      });
+      
+      // 刷新未发送数量
+      const { count } = await supabase
+        .from('alerts')
+        .select('*', { count: 'exact', head: true })
+        .is('telegram_sent', null);
+      setUnsentCount(count || 0);
+      
+    } catch (error) {
+      console.error('Push error:', error);
+      toast({
+        title: '❌ 推送失败',
+        description: '请稍后重试',
+        variant: 'destructive',
+      });
+    } finally {
+      setPushing(false);
+    }
+  };
 
   // 获取选中的币种数据
   const selectedCoinData = monitorData.find(d => d.coin.base === selectedCoin);
@@ -44,16 +97,28 @@ const Index = () => {
               每1分钟自动刷新 • 强告警: 持仓量Δ ≥10% 且 5m涨幅 ≥2% | 中告警: 持仓量Δ ≥8% 且 5m涨幅 ≥1.5% | 弱告警: 持仓量Δ ≥5% 或 5m涨幅 ≥1%
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={refresh}
-            disabled={loading}
-            className="gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            刷新
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePushAlerts}
+              disabled={pushing || unsentCount === 0}
+              className="gap-2"
+            >
+              <Send className={`w-4 h-4 ${pushing ? 'animate-pulse' : ''}`} />
+              立即推送警报 {unsentCount > 0 && `(${unsentCount})`}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refresh}
+              disabled={loading}
+              className="gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              刷新
+            </Button>
+          </div>
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

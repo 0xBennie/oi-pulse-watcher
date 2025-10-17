@@ -126,6 +126,26 @@ serve(async (req) => {
 
     console.log(`✅ Collection complete: ${successful} successful, ${failed} failed`);
 
+    // 统计本轮新产生的警报数并触发 Telegram 推送
+    const { count: newAlerts } = await supabase
+      .from('alerts')
+      .select('*', { count: 'exact', head: true })
+      .is('telegram_sent', null)
+      .gte('created_at', new Date(Date.now() - 120 * 1000).toISOString());
+
+    if (newAlerts && newAlerts > 0) {
+      console.log(`📢 Triggering telegram-alert for ${newAlerts} new alerts...`);
+      const { data: alertResult, error: alertError } = await supabase.functions.invoke('telegram-alert', {
+        body: { reason: 'auto-collect-cvd', newAlerts }
+      });
+      
+      if (alertError) {
+        console.error('Failed to trigger telegram-alert:', alertError);
+      } else {
+        console.log('✅ Telegram alert triggered:', alertResult);
+      }
+    }
+
     return new Response(
       JSON.stringify({ 
         success: true,

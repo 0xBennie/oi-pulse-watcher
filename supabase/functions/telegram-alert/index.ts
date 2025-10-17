@@ -61,15 +61,15 @@ serve(async (req) => {
 
     console.log('🔔 Checking for new alerts to send...');
 
-    // 获取最近1分钟的警报（未发送过的）
-    const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+    // 批量获取未发送的警报（不限时间，按时间从旧到新，限制数量避免超时）
+    const BATCH_LIMIT = 100;
     
     const { data: alerts, error: alertsError } = await supabase
       .from('alerts')
       .select('*')
-      .gte('created_at', oneMinuteAgo)
       .is('telegram_sent', null)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: true })
+      .limit(BATCH_LIMIT);
 
     if (alertsError) {
       console.error('Error fetching alerts:', alertsError);
@@ -77,13 +77,13 @@ serve(async (req) => {
     }
 
     if (!alerts || alerts.length === 0) {
-      console.log('No new alerts to send');
+      console.log('No unsent alerts to send');
       return new Response(JSON.stringify({ ok: true, alerts: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
 
-    console.log(`Found ${alerts.length} new alerts`);
+    console.log(`📬 Found ${alerts.length} unsent alerts (batch limit: ${BATCH_LIMIT})`);
 
     // 获取所有订阅用户
     const { data: subscribers } = await supabase
