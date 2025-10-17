@@ -9,6 +9,13 @@ verify_jwt = false
 [functions.auto-collect-cvd]
 verify_jwt = false
 
+# Cron job to auto-collect CVD data every 1 minute
+[[edge_runtime.scheduler]]
+enabled = true
+cron = "* * * * *"  # 每1分钟执行一次
+function_name = "auto-collect-cvd"
+timeout = 60  # 60秒超时
+
 [functions.manage-monitored-coins]
 verify_jwt = false
 

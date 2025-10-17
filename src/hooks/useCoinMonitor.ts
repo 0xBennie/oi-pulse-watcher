@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { MonitorDataWithHistory, AlertLevel, HistoricalDataPoint, Coin } from '@/types/coin';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchPriceData, fetchOIHistory, calculatePercentageChange } from '@/utils/binance';
-import { collectCVDData, getCVDHistory } from '@/utils/cvd';
+import { getCVDHistory } from '@/utils/cvd';
 import { detectWhaleSignal } from '@/utils/whaleDetection';
 
 interface PriceHistory {
@@ -97,11 +97,7 @@ export function useCoinMonitor(refreshInterval: number = 60000) { // 1分钟刷�
 
     const results = await Promise.all(
       coinsData.map(async (coin) => {
-        // 先触发CVD数据收集（后台执行）
-        collectCVDData(coin.binance).catch(err => {
-          console.error(`CVD collection failed for ${coin.binance}:`, err);
-        });
-
+        // CVD数据由后台定时任务自动收集，这里只读取即可
         const [priceData, oiHistory, cvdHistory] = await Promise.all([
           fetchPriceData(coin.binance),
           fetchOIHistory(coin.binance, 4), // 获取4个数据点用于洗盘检测
