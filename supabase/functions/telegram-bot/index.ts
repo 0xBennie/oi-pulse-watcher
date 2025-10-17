@@ -41,6 +41,13 @@ interface TelegramUpdate {
   message?: TelegramMessage;
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 serve(async (req) => {
   const origin = req.headers.get('Origin');
   const corsHeaders = getCorsHeaders(origin);
@@ -87,7 +94,7 @@ serve(async (req) => {
 /unsubscribe - 取消订阅
 /status - 查看订阅状态
 /list - 查看当前监控的币对
-/price <SYMBOL> - 查询币对价格（如：/price BTCUSDT）
+/price SYMBOL - 查询币对价格（示例：/price BTCUSDT）
 
 订阅后，当监控的币对出现强烈信号（如强势突破、顶部背离等）时，会自动推送消息给你！`
       );
@@ -215,7 +222,7 @@ async function sendTelegramMessage(token: string, chatId: number, text: string) 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: chatId,
-      text,
+      text: escapeHtml(text),
       parse_mode: 'HTML',
     }),
   });
