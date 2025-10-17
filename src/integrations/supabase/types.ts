@@ -41,6 +41,33 @@ export type Database = {
         }
         Relationships: []
       }
+      monitored_coins: {
+        Row: {
+          created_at: string | null
+          enabled: boolean
+          id: string
+          name: string
+          symbol: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          enabled?: boolean
+          id?: string
+          name: string
+          symbol: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          enabled?: boolean
+          id?: string
+          name?: string
+          symbol?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       trade_data: {
         Row: {
           created_at: string | null
