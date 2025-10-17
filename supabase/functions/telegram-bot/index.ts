@@ -245,18 +245,20 @@ serve(async (req) => {
         // 格式化输出
         const formatNum = (n: number) => {
           const sign = n >= 0 ? '+' : '';
-          return `${sign}${n.toFixed(1)}%`;
+          return `${sign}${n.toFixed(1)}`;
         };
 
-        let message = '📊 市场监控数据（按OI涨幅排序）\n\n';
+        const pad = (str: string, len: number) => str.padEnd(len, ' ');
+
+        let message = '📊 市场监控（按OI-1h排序）\n\n';
         
         allStats.slice(0, 10).forEach((stat, i) => {
           const s = stat!;
-          message += `${i + 1}️⃣ ${s.symbol}\n`;
-          message += `5m: OI${formatNum(s.oi_5m)} CVD${formatNum(s.cvd_5m)} P${formatNum(s.price_5m)}\n`;
-          message += `15m: OI${formatNum(s.oi_15m)} CVD${formatNum(s.cvd_15m)} P${formatNum(s.price_15m)}\n`;
-          message += `1h: OI${formatNum(s.oi_1h)} CVD${formatNum(s.cvd_1h)} P${formatNum(s.price_1h)}\n`;
-          message += `24h: P${formatNum(s.price_24h)}\n\n`;
+          message += `${i + 1}. ${s.symbol}\n`;
+          message += `     5m    15m    1h     4h    24h    48h\n`;
+          message += `OI ${pad(formatNum(s.oi_5m), 5)} ${pad(formatNum(s.oi_15m), 6)} ${pad(formatNum(s.oi_1h), 6)} ${pad(formatNum(s.oi_4h), 5)} ${pad(formatNum(s.oi_24h), 6)} ${formatNum(s.oi_48h)}\n`;
+          message += `CV ${pad(formatNum(s.cvd_5m), 5)} ${pad(formatNum(s.cvd_15m), 6)} ${pad(formatNum(s.cvd_1h), 6)} -- -- --\n`;
+          message += `P  ${pad(formatNum(s.price_5m), 5)} ${pad(formatNum(s.price_15m), 6)} ${pad(formatNum(s.price_1h), 6)} -- ${pad(formatNum(s.price_24h), 6)} --\n\n`;
         });
 
         await sendTelegramMessage(botToken, chatId, message);
