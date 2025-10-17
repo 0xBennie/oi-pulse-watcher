@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MonitorDataWithHistory, AlertLevel, HistoricalDataPoint } from '@/types/coin';
-import { getStoredCoins } from '@/utils/storage';
+import { MonitorDataWithHistory, AlertLevel, HistoricalDataPoint, Coin } from '@/types/coin';
+import { supabase } from '@/integrations/supabase/client';
 import { fetchPriceData, fetchOIHistory, calculatePercentageChange } from '@/utils/binance';
 import { collectCVDData, getCVDHistory } from '@/utils/cvd';
 import { detectWhaleSignal } from '@/utils/whaleDetection';
@@ -19,7 +19,7 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
   const [monitorData, setMonitorData] = useState<MonitorDataWithHistory[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [coins, setCoins] = useState(getStoredCoins());
+  const [coins, setCoins] = useState<Coin[]>([]);
   const [priceHistory, setPriceHistory] = useState<PriceHistory>({});
   const historicalDataRef = useRef<HistoricalStorage>({});
 
@@ -40,16 +40,34 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
   };
 
   const fetchMonitorData = useCallback(async () => {
-    const storedCoins = getStoredCoins();
-    setCoins(storedCoins);
+    // 从数据库获取启用的监控币种
+    const { data: monitoredCoins, error } = await supabase
+      .from('monitored_coins')
+      .select('symbol, name, enabled')
+      .eq('enabled', true);
 
-    if (storedCoins.length === 0) {
+    if (error) {
+      console.error('Failed to fetch monitored coins:', error);
       setMonitorData([]);
       return;
     }
 
+    if (!monitoredCoins || monitoredCoins.length === 0) {
+      setCoins([]);
+      setMonitorData([]);
+      return;
+    }
+
+    // 转换为 Coin 格式
+    const coinsData: Coin[] = monitoredCoins.map(coin => ({
+      base: coin.name,
+      binance: coin.symbol,
+    }));
+
+    setCoins(coinsData);
+
     const results = await Promise.all(
-      storedCoins.map(async (coin) => {
+      coinsData.map(async (coin) => {
         // 先触发CVD数据收集（后台执行）
         collectCVDData(coin.binance).catch(err => {
           console.error(`CVD collection failed for ${coin.binance}:`, err);
@@ -184,7 +202,27 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
       fetchMonitorData();
     }, refreshInterval);
 
-    return () => clearInterval(interval);
+    // 监听 monitored_coins 表的变化
+    const channel = supabase
+      .channel('monitored-coins-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'monitored_coins'
+        },
+        () => {
+          console.log('Monitored coins changed, refreshing...');
+          fetchMonitorData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, [fetchMonitorData, refreshInterval]);
 
   const refresh = useCallback(async () => {

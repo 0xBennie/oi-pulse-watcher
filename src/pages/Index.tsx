@@ -1,14 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useCoinMonitor } from '@/hooks/useCoinMonitor';
-import { AddCoinDialog } from '@/components/AddCoinDialog';
-import { AddAlphaCoinsButton } from '@/components/AddAlphaCoinsButton';
 import { CoinCard } from '@/components/CoinCard';
 import { CoinManagement } from '@/components/CoinManagement';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { RefreshCw, Activity, AlertTriangle, Clock, Settings } from 'lucide-react';
+import { RefreshCw, Activity, AlertTriangle, Clock } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const Index = () => {
@@ -47,20 +44,16 @@ const Index = () => {
               每3分钟自动刷新 • 强告警: 持仓量Δ ≥10% 且 5m涨幅 ≥2% | 中告警: 持仓量Δ ≥8% 且 5m涨幅 ≥1.5% | 弱告警: 持仓量Δ ≥5% 或 5m涨幅 ≥1%
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <AddAlphaCoinsButton onCoinsAdded={refresh} />
-            <AddCoinDialog onCoinAdded={refresh} />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={refresh}
-              disabled={loading}
-              className="gap-2"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              刷新
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={loading}
+            className="gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </Button>
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -111,94 +104,79 @@ const Index = () => {
           </Card>
         </div>
 
+        {/* 币对管理 */}
+        <CoinManagement />
+
+        {/* 实时监控 */}
         <Card>
           <CardHeader>
-            <CardTitle>CVD监控面板</CardTitle>
+            <CardTitle>实时监控</CardTitle>
             <CardDescription>
               24/7自动监控 • 每3分钟更新 • 橙色线: CVD累积量 • 紫色虚线: 价格走势
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="monitor" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-4">
-                <TabsTrigger value="monitor" className="flex items-center gap-2">
-                  <Activity className="w-4 h-4" />
-                  实时监控
-                </TabsTrigger>
-                <TabsTrigger value="management" className="flex items-center gap-2">
-                  <Settings className="w-4 h-4" />
-                  币对管理
-                </TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="monitor" className="mt-0">
-                <div className="space-y-4">
-                  {monitorData.length > 0 && (
-                    <div className="flex justify-end">
-                      <Select value={selectedCoin} onValueChange={setSelectedCoin}>
-                        <SelectTrigger className="w-48 bg-card border-border">
-                          <SelectValue placeholder="选择币种" />
-                        </SelectTrigger>
-                        <SelectContent className="bg-card border-border z-50">
-                          {monitorData.map((data) => (
-                            <SelectItem 
-                              key={data.coin.base} 
-                              value={data.coin.base}
-                              className="hover:bg-muted focus:bg-muted cursor-pointer"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium">{data.coin.base}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  ${data.price.toFixed(4)}
-                                </span>
-                                {data.alertLevel !== 'NONE' && (
-                                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                    data.alertLevel === 'STRONG' ? 'bg-red-500/10 text-red-500' :
-                                    data.alertLevel === 'MEDIUM' ? 'bg-orange-500/10 text-orange-500' :
-                                    'bg-yellow-500/10 text-yellow-500'
-                                  }`}>
-                                    {data.alertLevel}
-                                  </span>
-                                )}
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  
-                  {loading && !lastUpdate ? (
-                    <div className="max-w-4xl mx-auto">
-                      <Skeleton className="h-[600px] w-full" />
-                    </div>
-                  ) : monitorData.length === 0 ? (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <p className="mb-2">暂无监控币种</p>
-                      <p className="text-sm">请切换到"币对管理"标签页添加要监控的币对</p>
-                    </div>
-                  ) : selectedCoinData ? (
-                    <div className="max-w-4xl mx-auto">
-                      <CoinCard 
-                        data={selectedCoinData} 
-                        onRemove={() => {
-                          refresh();
-                          setSelectedCoin('');
-                        }} 
-                      />
-                    </div>
-                  ) : (
-                    <div className="text-center py-12 text-muted-foreground">
-                      <p>正在加载数据...</p>
-                    </div>
-                  )}
+            <div className="space-y-4">
+              {monitorData.length > 0 && (
+                <div className="flex justify-end">
+                  <Select value={selectedCoin} onValueChange={setSelectedCoin}>
+                    <SelectTrigger className="w-48 bg-card border-border">
+                      <SelectValue placeholder="选择币种" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-card border-border z-50">
+                      {monitorData.map((data) => (
+                        <SelectItem 
+                          key={data.coin.base} 
+                          value={data.coin.base}
+                          className="hover:bg-muted focus:bg-muted cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{data.coin.base}</span>
+                            <span className="text-xs text-muted-foreground">
+                              ${data.price.toFixed(4)}
+                            </span>
+                            {data.alertLevel !== 'NONE' && (
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                data.alertLevel === 'STRONG' ? 'bg-red-500/10 text-red-500' :
+                                data.alertLevel === 'MEDIUM' ? 'bg-orange-500/10 text-orange-500' :
+                                'bg-yellow-500/10 text-yellow-500'
+                              }`}>
+                                {data.alertLevel}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-              </TabsContent>
+              )}
               
-              <TabsContent value="management" className="mt-0">
-                <CoinManagement />
-              </TabsContent>
-            </Tabs>
+              {loading && !lastUpdate ? (
+                <div className="max-w-4xl mx-auto">
+                  <Skeleton className="h-[600px] w-full" />
+                </div>
+              ) : monitorData.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p className="mb-2">暂无监控币种</p>
+                  <p className="text-sm">请在上方"币对管理"中添加要监控的币对</p>
+                </div>
+              ) : selectedCoinData ? (
+                <div className="max-w-4xl mx-auto">
+                  <CoinCard 
+                    data={selectedCoinData} 
+                    onRemove={() => {
+                      refresh();
+                      setSelectedCoin('');
+                    }} 
+                  />
+                </div>
+              ) : (
+                <div className="text-center py-12 text-muted-foreground">
+                  <p>正在加载数据...</p>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 
