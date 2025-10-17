@@ -195,10 +195,123 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
       throw cvdError;
     }
 
+    // 获取上一个OI值计算变化率
+    const { data: prevOIData } = await supabase
+      .from('cvd_data')
+      .select('price')
+      .eq('symbol', symbol)
+      .order('timestamp', { ascending: false })
+      .limit(3)
+      .maybeSingle();
+
+    let oiChangePercent = 0;
+    // 这里简化处理，实际应该存储OI历史
+    
+    // 计算告警
+    const alertType = await determineAlert(
+      symbol,
+      cvd,
+      cumulativeCvd,
+      latestPrice,
+      oiChangePercent,
+      supabase
+    );
+
+    if (alertType !== 'NONE') {
+      // 保存告警到数据库
+      await supabase.from('alerts').insert({
+        symbol,
+        alert_type: alertType,
+        price: latestPrice,
+        cvd: cumulativeCvd,
+        cvd_change_percent: (cvd / Math.abs(prevCvd || 1)) * 100,
+        price_change_percent: 0, // 这里需要历史价格数据
+        oi_change_percent: oiChangePercent,
+        details: {
+          trades_count: trades.length,
+          timestamp: latestTimestamp
+        }
+      });
+      
+      console.log(`  🚨 ${symbol}: Alert=${alertType}`);
+    }
+
     console.log(`  ✓ ${symbol}: CVD=${cumulativeCvd.toFixed(2)}, Price=$${latestPrice}`);
 
   } catch (error) {
     console.error(`  ✗ Failed to process ${symbol}:`, error);
     throw error;
+  }
+}
+
+async function determineAlert(
+  symbol: string,
+  cvdDelta: number,
+  cumulativeCvd: number,
+  currentPrice: number,
+  oiChangePercent: number,
+  supabase: any
+): Promise<string> {
+  try {
+    // 获取历史数据用于计算变化率和背离
+    const { data: recentData } = await supabase
+      .from('cvd_data')
+      .select('cvd, price, timestamp')
+      .eq('symbol', symbol)
+      .order('timestamp', { ascending: false })
+      .limit(61); // 当前+60个历史点
+
+    if (!recentData || recentData.length < 3) {
+      return 'NONE';
+    }
+
+    // 计算CVD变化率（最近3个点，约9分钟）
+    const currentCVD = parseFloat(recentData[0].cvd);
+    const prevCVD = parseFloat(recentData[2].cvd);
+    const cvdChangePercent = ((currentCVD - prevCVD) / Math.abs(prevCVD || 1)) * 100;
+
+    // 计算价格变化率
+    const priceNow = parseFloat(recentData[0].price);
+    const pricePrev = parseFloat(recentData[2].price);
+    const priceChangePercent = ((priceNow - pricePrev) / pricePrev) * 100;
+
+    // 1. STRONG_BREAKOUT: CVD↑≥5%、价↑≥2%、OI↑≥5%
+    if (cvdChangePercent >= 5 && priceChangePercent >= 2 && oiChangePercent >= 5) {
+      return 'STRONG_BREAKOUT';
+    }
+
+    // 2. ACCUMULATION: CVD↑≥8%、价格横盘±1%、OI持平或上升
+    if (cvdChangePercent >= 8 && Math.abs(priceChangePercent) <= 1 && oiChangePercent >= 0) {
+      return 'ACCUMULATION';
+    }
+
+    // 3. DISTRIBUTION_WARN: CVD↓≥3%、价↑≥1%
+    if (cvdChangePercent <= -3 && priceChangePercent >= 1) {
+      return 'DISTRIBUTION_WARN';
+    }
+
+    // 4. SHORT_CONFIRM: CVD↓≥5%、价↓≥2%、OI↑
+    if (cvdChangePercent <= -5 && priceChangePercent <= -2 && oiChangePercent > 0) {
+      return 'SHORT_CONFIRM';
+    }
+
+    // 5. TOP_DIVERGENCE: 近60根内价格创新高但CVD未创新高
+    if (recentData.length >= 60) {
+      const prices = recentData.map((d: any) => parseFloat(d.price));
+      const cvds = recentData.map((d: any) => parseFloat(d.cvd));
+      
+      const maxPrice = Math.max(...prices);
+      const maxCVD = Math.max(...cvds);
+      
+      // 如果当前价格是新高（或接近），但CVD不是新高
+      if (priceNow >= maxPrice * 0.998 && currentCVD < maxCVD * 0.95) {
+        return 'TOP_DIVERGENCE';
+      }
+    }
+
+    return 'NONE';
+  } catch (error) {
+    console.error(`Alert calculation error for ${symbol}:`, error);
+    return 'NONE';
   }
 }

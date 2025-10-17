@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      alerts: {
+        Row: {
+          alert_type: string
+          created_at: string
+          cvd: number
+          cvd_change_percent: number
+          details: Json | null
+          id: string
+          oi_change_percent: number
+          price: number
+          price_change_percent: number
+          symbol: string
+        }
+        Insert: {
+          alert_type: string
+          created_at?: string
+          cvd: number
+          cvd_change_percent: number
+          details?: Json | null
+          id?: string
+          oi_change_percent: number
+          price: number
+          price_change_percent: number
+          symbol: string
+        }
+        Update: {
+          alert_type?: string
+          created_at?: string
+          cvd?: number
+          cvd_change_percent?: number
+          details?: Json | null
+          id?: string
+          oi_change_percent?: number
+          price?: number
+          price_change_percent?: number
+          symbol?: string
+        }
+        Relationships: []
+      }
       cvd_data: {
         Row: {
           created_at: string | null

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { MonitorData, SortField, SortDirection } from '@/types/coin';
 import { AlertBadge } from './AlertBadge';
+import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { ArrowUpDown, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
@@ -57,7 +58,14 @@ export function MonitorTable({ data, onCoinRemoved }: MonitorTableProps) {
           bValue = Math.abs(b.openInterestChangePercent5m);
           break;
         case 'alert':
-          const alertOrder = { STRONG: 3, MEDIUM: 2, WEAK: 1, NONE: 0 };
+          const alertOrder = { 
+            STRONG_BREAKOUT: 5, 
+            ACCUMULATION: 4, 
+            DISTRIBUTION_WARN: 3, 
+            SHORT_CONFIRM: 2, 
+            TOP_DIVERGENCE: 1, 
+            NONE: 0 
+          };
           aValue = alertOrder[a.alertLevel];
           bValue = alertOrder[b.alertLevel];
           break;
@@ -204,9 +212,11 @@ export function MonitorTable({ data, onCoinRemoved }: MonitorTableProps) {
               key={item.coin.base}
               className={cn(
                 'border-border hover:bg-secondary/50 transition-colors',
-                item.alertLevel === 'STRONG' && 'bg-alert-strong/5',
-                item.alertLevel === 'MEDIUM' && 'bg-alert-medium/5',
-                item.alertLevel === 'WEAK' && 'bg-alert-weak/5'
+                item.alertLevel === 'STRONG_BREAKOUT' && 'bg-green-500/5',
+                item.alertLevel === 'ACCUMULATION' && 'bg-blue-500/5',
+                item.alertLevel === 'DISTRIBUTION_WARN' && 'bg-orange-500/5',
+                item.alertLevel === 'SHORT_CONFIRM' && 'bg-red-500/5',
+                item.alertLevel === 'TOP_DIVERGENCE' && 'bg-yellow-500/5'
               )}
             >
               <TableCell className="font-semibold">{item.coin.base}</TableCell>
@@ -246,7 +256,23 @@ export function MonitorTable({ data, onCoinRemoved }: MonitorTableProps) {
                 {formatNumber(item.openInterestChangePercent5m)}%
               </TableCell>
               <TableCell>
-                <AlertBadge level={item.alertLevel} />
+                {item.alertLevel !== 'NONE' ? (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'font-medium',
+                      item.alertLevel === 'STRONG_BREAKOUT' && 'border-green-500 text-green-600',
+                      item.alertLevel === 'ACCUMULATION' && 'border-blue-500 text-blue-600',
+                      item.alertLevel === 'DISTRIBUTION_WARN' && 'border-orange-500 text-orange-600',
+                      item.alertLevel === 'SHORT_CONFIRM' && 'border-red-500 text-red-600',
+                      item.alertLevel === 'TOP_DIVERGENCE' && 'border-yellow-500 text-yellow-600'
+                    )}
+                  >
+                    {item.alertLevel}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )}
               </TableCell>
               <TableCell>
                 <Button

@@ -23,19 +23,48 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
   const [priceHistory, setPriceHistory] = useState<PriceHistory>({});
   const historicalDataRef = useRef<HistoricalStorage>({});
 
-  const determineAlertLevel = (oiChange: number, priceChange5m: number): AlertLevel => {
-    const absOiChange = Math.abs(oiChange);
-    const absPriceChange = Math.abs(priceChange5m);
+  const determineAlertLevel = (
+    cvdChangePercent: number,
+    priceChangePercent: number,
+    oiChangePercent: number,
+    history: HistoricalDataPoint[]
+  ): AlertLevel => {
+    // 1. STRONG_BREAKOUT: CVD↑≥5%、价↑≥2%、OI↑≥5%
+    if (cvdChangePercent >= 5 && priceChangePercent >= 2 && oiChangePercent >= 5) {
+      return 'STRONG_BREAKOUT';
+    }
 
-    if (absOiChange >= 10 && absPriceChange >= 2) {
-      return 'STRONG';
+    // 2. ACCUMULATION: CVD↑≥8%、价格横盘±1%、OI持平或上升
+    if (cvdChangePercent >= 8 && Math.abs(priceChangePercent) <= 1 && oiChangePercent >= 0) {
+      return 'ACCUMULATION';
     }
-    if (absOiChange >= 8 && absPriceChange >= 1.5) {
-      return 'MEDIUM';
+
+    // 3. DISTRIBUTION_WARN: CVD↓≥3%、价↑≥1%
+    if (cvdChangePercent <= -3 && priceChangePercent >= 1) {
+      return 'DISTRIBUTION_WARN';
     }
-    if (absOiChange >= 5 || absPriceChange >= 1) {
-      return 'WEAK';
+
+    // 4. SHORT_CONFIRM: CVD↓≥5%、价↓≥2%、OI↑
+    if (cvdChangePercent <= -5 && priceChangePercent <= -2 && oiChangePercent > 0) {
+      return 'SHORT_CONFIRM';
     }
+
+    // 5. TOP_DIVERGENCE: 近60根内价格创新高但CVD未创新高
+    if (history.length >= 60) {
+      const recent60 = history.slice(-60);
+      const currentPrice = recent60[recent60.length - 1].price;
+      const currentCVD = recent60[recent60.length - 1].cvd;
+      
+      // 检查价格是否创新高
+      const maxPrice = Math.max(...recent60.map(h => h.price));
+      const maxCVD = Math.max(...recent60.map(h => h.cvd));
+      
+      // 如果当前价格是新高（或接近新高），但CVD不是新高
+      if (currentPrice >= maxPrice * 0.998 && currentCVD < maxCVD * 0.95) {
+        return 'TOP_DIVERGENCE';
+      }
+    }
+
     return 'NONE';
   };
 
@@ -123,7 +152,36 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
           priceData.quoteVolume || 0
         );
 
-        const alertLevel = determineAlertLevel(oiChangePercent, priceChangePercent5m);
+        // 需要先构建历史数据再判断告警
+        let tempHistory: HistoricalDataPoint[];
+        
+        if (cvdHistory.length > 0) {
+          const historicalPoints = cvdHistory.map(point => ({
+            timestamp: point.timestamp,
+            price: point.price,
+            openInterest: currentOI.sumOpenInterestValue,
+            cvd: point.cvd,
+          }));
+          
+          const newDataPoint: HistoricalDataPoint = {
+            timestamp: Date.now(),
+            price: currentPrice,
+            openInterest: currentOI.sumOpenInterestValue,
+            cvd: currentCVD,
+          };
+          
+          tempHistory = [...historicalPoints, newDataPoint];
+        } else {
+          const existingHistory = historicalDataRef.current[coin.base] || [];
+          tempHistory = existingHistory;
+        }
+
+        const alertLevel = determineAlertLevel(
+          cvdChangePercent, 
+          priceChangePercent5m, 
+          oiChangePercent,
+          tempHistory
+        );
 
         // Update historical data - 合并CVD历史数据
         const timestamp = Date.now();

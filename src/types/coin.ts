@@ -46,7 +46,13 @@ export interface MonitorDataWithHistory extends MonitorData {
   history: HistoricalDataPoint[];
 }
 
-export type AlertLevel = 'NONE' | 'WEAK' | 'MEDIUM' | 'STRONG';
+export type AlertLevel = 
+  | 'STRONG_BREAKOUT'      // CVD↑≥5%、价↑≥2%、OI↑≥5%
+  | 'ACCUMULATION'         // CVD↑≥8%、价格横盘±1%、OI持平或上升
+  | 'DISTRIBUTION_WARN'    // CVD↓≥3%、价↑≥1%
+  | 'SHORT_CONFIRM'        // CVD↓≥5%、价↓≥2%、OI↑
+  | 'TOP_DIVERGENCE'       // 近60根内价格创新高但CVD未创新高
+  | 'NONE';
 
 // 庄家信号类型
 export type WhaleSignalType = 'WHALE_BUY' | 'WHALE_SELL' | 'WASH_TRADING';

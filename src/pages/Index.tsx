@@ -137,8 +137,10 @@ const Index = () => {
                             </span>
                             {data.alertLevel !== 'NONE' && (
                               <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                data.alertLevel === 'STRONG' ? 'bg-red-500/10 text-red-500' :
-                                data.alertLevel === 'MEDIUM' ? 'bg-orange-500/10 text-orange-500' :
+                                data.alertLevel === 'STRONG_BREAKOUT' ? 'bg-green-500/10 text-green-500' :
+                                data.alertLevel === 'ACCUMULATION' ? 'bg-blue-500/10 text-blue-500' :
+                                data.alertLevel === 'DISTRIBUTION_WARN' ? 'bg-orange-500/10 text-orange-500' :
+                                data.alertLevel === 'SHORT_CONFIRM' ? 'bg-red-500/10 text-red-500' :
                                 'bg-yellow-500/10 text-yellow-500'
                               }`}>
                                 {data.alertLevel}

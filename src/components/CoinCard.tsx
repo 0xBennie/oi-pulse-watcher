@@ -1,4 +1,4 @@
-import { MonitorDataWithHistory } from '@/types/coin';
+import { MonitorDataWithHistory, AlertLevel } from '@/types/coin';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -54,10 +54,46 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
     onRemove();
   };
 
+  const getAlertColor = (level: AlertLevel) => {
+    switch (level) {
+      case 'STRONG_BREAKOUT':
+        return 'border-green-500 bg-green-50/50 dark:bg-green-950/20';
+      case 'ACCUMULATION':
+        return 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20';
+      case 'DISTRIBUTION_WARN':
+        return 'border-orange-500 bg-orange-50/50 dark:bg-orange-950/20';
+      case 'SHORT_CONFIRM':
+        return 'border-red-500 bg-red-50/50 dark:bg-red-950/20';
+      case 'TOP_DIVERGENCE':
+        return 'border-yellow-500 bg-yellow-50/50 dark:bg-yellow-950/20';
+      default:
+        return '';
+    }
+  };
+
+  const getAlertLabel = (level: AlertLevel) => {
+    switch (level) {
+      case 'STRONG_BREAKOUT':
+        return '🚀 强势突破';
+      case 'ACCUMULATION':
+        return '🧨 庄家建仓';
+      case 'DISTRIBUTION_WARN':
+        return '😨 出货警告';
+      case 'SHORT_CONFIRM':
+        return '💥 空头确认';
+      case 'TOP_DIVERGENCE':
+        return '📈 顶部背离';
+      default:
+        return '';
+    }
+  };
+
   const borderColor = {
-    STRONG: 'border-l-alert-strong',
-    MEDIUM: 'border-l-alert-medium',
-    WEAK: 'border-l-alert-weak',
+    STRONG_BREAKOUT: 'border-l-green-500',
+    ACCUMULATION: 'border-l-blue-500',
+    DISTRIBUTION_WARN: 'border-l-orange-500',
+    SHORT_CONFIRM: 'border-l-red-500',
+    TOP_DIVERGENCE: 'border-l-yellow-500',
     NONE: 'border-l-transparent',
   }[data.alertLevel];
 
@@ -140,7 +176,11 @@ export function CoinCard({ data, rank, onRemove }: CoinCardProps) {
         <Badge variant="outline" className="text-xs">
           币安永续
         </Badge>
-        <AlertBadge level={data.alertLevel} />
+        {data.alertLevel !== 'NONE' && (
+          <div className="px-3 py-1 rounded-full text-sm font-medium">
+            {getAlertLabel(data.alertLevel)}
+          </div>
+        )}
       </CardFooter>
     </Card>
   );
