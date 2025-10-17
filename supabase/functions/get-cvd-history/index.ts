@@ -59,20 +59,21 @@ serve(async (req) => {
       );
     }
 
-    // 获取历史CVD数据
+    // 获取历史CVD数据（先按时间降序取最近的安全数量，再在内存中反转为升序返回）
     const { data, error } = await supabase
       .from('cvd_data')
       .select('timestamp, cvd, price')
       .eq('symbol', symbol)
-      .order('timestamp', { ascending: true })
+      .order('timestamp', { ascending: false })
       .limit(safeLimit);
+
 
     if (error) {
       throw error;
     }
 
     return new Response(
-      JSON.stringify({ data }),
+      JSON.stringify({ data: (data || []).reverse() }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
