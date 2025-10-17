@@ -22,7 +22,7 @@ function getCorsHeaders(origin: string | null): HeadersInit {
   };
 }
 
-const MAX_LIMIT = 500;
+const MAX_LIMIT = 3000; // 支持最多3000个点（约6天数据）
 
 serve(async (req) => {
   const origin = req.headers.get('Origin');
@@ -37,10 +37,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { symbol, limit = 180 } = await req.json();
+    const { symbol, limit = 1440 } = await req.json(); // 默认3天数据
     
     // Validate and bound the limit parameter
-    const requestedLimit = typeof limit === 'number' ? limit : 180;
+    const requestedLimit = typeof limit === 'number' ? limit : 1440;
     const safeLimit = Math.min(Math.max(1, requestedLimit), MAX_LIMIT);
 
     if (!symbol) {
