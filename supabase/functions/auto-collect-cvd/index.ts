@@ -274,6 +274,23 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
     );
 
     if (alertType !== 'NONE') {
+      // 冷却机制：检查最近15分钟内是否已有相同类型警报
+      const fifteenMinutesAgo = Date.now() - 15 * 60 * 1000;
+
+      const { data: recentAlert } = await supabase
+        .from('alerts')
+        .select('id')
+        .eq('symbol', symbol)
+        .eq('alert_type', alertType)
+        .gte('created_at', new Date(fifteenMinutesAgo).toISOString())
+        .limit(1)
+        .maybeSingle();
+
+      if (recentAlert) {
+        console.log(`  ⏸️ ${symbol}: ${alertType} 在冷却中，跳过`);
+        return;
+      }
+
       // 保存告警到数据库
       await supabase.from('alerts').insert({
         symbol,
@@ -326,18 +343,24 @@ async function determineAlert(
     const prevCVD = parseFloat(recentData[2].cvd);
     const cvdChangePercent = ((currentCVD - prevCVD) / Math.abs(prevCVD || 1)) * 100;
 
+    // 过滤异常值（CVD变化超过±100%通常是数据异常）
+    if (Math.abs(cvdChangePercent) > 100) {
+      console.warn(`  ⚠️ ${symbol}: CVD变化异常 ${cvdChangePercent.toFixed(2)}%，跳过`);
+      return 'NONE';
+    }
+
     // 计算价格变化率
     const priceNow = parseFloat(recentData[0].price);
     const pricePrev = parseFloat(recentData[2].price);
     const priceChangePercent = ((priceNow - pricePrev) / pricePrev) * 100;
 
-    // 1. STRONG_BREAKOUT: CVD↑≥5%、价↑≥2%、OI↑≥5%
-    if (cvdChangePercent >= 5 && priceChangePercent >= 2 && oiChangePercent >= 5) {
+    // 1. STRONG_BREAKOUT: CVD↑≥8%、价↑≥3%（暂时禁用OI检查）
+    if (cvdChangePercent >= 8 && priceChangePercent >= 3) {
       return 'STRONG_BREAKOUT';
     }
 
-    // 2. ACCUMULATION: CVD↑≥8%、价格横盘±1%、OI持平或上升
-    if (cvdChangePercent >= 8 && Math.abs(priceChangePercent) <= 1 && oiChangePercent >= 0) {
+    // 2. ACCUMULATION: CVD↑≥15%、价格横盘±0.5%（暂时禁用OI检查）
+    if (cvdChangePercent >= 15 && Math.abs(priceChangePercent) <= 0.5) {
       return 'ACCUMULATION';
     }
 
@@ -346,8 +369,8 @@ async function determineAlert(
       return 'DISTRIBUTION_WARN';
     }
 
-    // 4. SHORT_CONFIRM: CVD↓≥5%、价↓≥2%、OI↑
-    if (cvdChangePercent <= -5 && priceChangePercent <= -2 && oiChangePercent > 0) {
+    // 4. SHORT_CONFIRM: CVD↓≥5%、价↓≥2%（暂时禁用OI检查）
+    if (cvdChangePercent <= -5 && priceChangePercent <= -2) {
       return 'SHORT_CONFIRM';
     }
 
@@ -359,8 +382,8 @@ async function determineAlert(
       const maxPrice = Math.max(...prices);
       const maxCVD = Math.max(...cvds);
       
-      // 如果当前价格是新高（或接近），但CVD不是新高
-      if (priceNow >= maxPrice * 0.998 && currentCVD < maxCVD * 0.95) {
+      // 如果当前价格是新高（≥99.9%），但CVD显著背离（<90%）
+      if (priceNow >= maxPrice * 0.999 && currentCVD < maxCVD * 0.90) {
         return 'TOP_DIVERGENCE';
       }
     }
