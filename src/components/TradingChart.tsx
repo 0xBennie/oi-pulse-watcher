@@ -83,10 +83,18 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
     );
   }
 
-  // 计算CVD的最大最小值用于颜色渐变
+  // 计算CVD的最大最小值用于颜色渐变和Y轴范围
   const cvdValues = chartData.map(d => d.CVD);
   const maxCVD = Math.max(...cvdValues);
   const minCVD = Math.min(...cvdValues);
+  
+  // 动态计算CVD的Y轴范围，增加10%的边距让曲线更清晰
+  const cvdRange = maxCVD - minCVD;
+  const cvdPadding = cvdRange * 0.1;
+  const cvdDomain = [
+    Math.floor(minCVD - cvdPadding),
+    Math.ceil(maxCVD + cvdPadding)
+  ];
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -198,6 +206,7 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
               axisLine={false}
               tickFormatter={(value) => `${value >= 0 ? '+' : ''}${value.toFixed(0)}K`}
               width={50}
+              domain={cvdDomain}
             />
             <YAxis
               yAxisId="right"
