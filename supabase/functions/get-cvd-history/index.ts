@@ -25,6 +25,15 @@ serve(async (req) => {
       );
     }
 
+    // Validate symbol format (alphanumeric, max 20 chars)
+    const symbolPattern = /^[A-Z0-9]{3,20}$/;
+    if (!symbolPattern.test(symbol)) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid symbol format' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // 获取历史CVD数据
     const { data, error } = await supabase
       .from('cvd_data')

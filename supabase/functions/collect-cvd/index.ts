@@ -35,6 +35,15 @@ serve(async (req) => {
       );
     }
 
+    // Validate symbol format (alphanumeric, max 20 chars, typically ends with USDT)
+    const symbolPattern = /^[A-Z0-9]{3,20}$/;
+    if (!symbolPattern.test(symbol)) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid symbol format' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     console.log(`Collecting trades for ${symbol}`);
 
     // 获取最近1000笔交易（使用trades而不是aggTrades，aggTrades没有isBuyerMaker字段）

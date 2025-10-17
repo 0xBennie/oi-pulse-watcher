@@ -1,7 +1,1 @@
 project_id = "mqyoujkxhgwhgfwsqrgh"
-
-[functions.collect-cvd]
-verify_jwt = false
-
-[functions.get-cvd-history]
-verify_jwt = false
