@@ -9,14 +9,14 @@ interface TradingChartProps {
   symbol: string;
 }
 
-type TimeFrame = '15m' | '1h' | '4h';
+type TimeFrame = '3m' | '15m' | '1h' | '4h';
 
 export function TradingChart({ data, symbol }: TradingChartProps) {
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('15m');
 
   const formatTime = (timestamp: number, frame: TimeFrame) => {
     const date = new Date(timestamp);
-    if (frame === '15m') {
+    if (frame === '3m' || frame === '15m') {
       return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     } else if (frame === '1h') {
       return date.toLocaleString('zh-CN', { 
@@ -37,7 +37,7 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
     if (rawData.length === 0) return [];
     
     // 根据时间框架确定聚合间隔
-    const intervalMinutes = frame === '15m' ? 5 : frame === '1h' ? 20 : 80;
+    const intervalMinutes = frame === '3m' ? 1 : frame === '15m' ? 5 : frame === '1h' ? 20 : 80;
     const intervalMs = intervalMinutes * 60 * 1000;
     
     const result: HistoricalDataPoint[] = [];
@@ -134,7 +134,7 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
         </div>
         <div className="flex items-center gap-4">
           <div className="flex gap-1 bg-muted/50 p-1 rounded-lg">
-            {(['15m', '1h', '4h'] as TimeFrame[]).map((frame) => (
+            {(['3m', '15m', '1h', '4h'] as TimeFrame[]).map((frame) => (
               <Button
                 key={frame}
                 variant={timeFrame === frame ? 'default' : 'ghost'}
