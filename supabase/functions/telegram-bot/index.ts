@@ -105,7 +105,7 @@ serve(async (req) => {
         username,
         chat_id: chatId.toString(),
         subscribed: false,
-      });
+      }, { onConflict: 'telegram_id' });
 
     } else if (text.startsWith('/subscribe')) {
       // 订阅警报
@@ -116,9 +116,10 @@ serve(async (req) => {
           username,
           chat_id: chatId.toString(),
           subscribed: true,
-        });
+        }, { onConflict: 'telegram_id' });
 
       if (error) {
+        console.error('Subscribe error:', error);
         await sendTelegramMessage(botToken, chatId, '❌ 订阅失败，请稍后重试');
       } else {
         await sendTelegramMessage(botToken, chatId, '✅ 订阅成功！你将收到所有监控币对的警报通知');
@@ -132,6 +133,7 @@ serve(async (req) => {
         .eq('telegram_id', userId.toString());
 
       if (error) {
+        console.error('Unsubscribe error:', error);
         await sendTelegramMessage(botToken, chatId, '❌ 取消订阅失败');
       } else {
         await sendTelegramMessage(botToken, chatId, '✅ 已取消订阅');
