@@ -185,13 +185,13 @@ serve(async (req) => {
         const statsPromises = coins.map(async (coin) => {
           const symbol = coin.symbol;
           
-          // 获取CVD历史数据（最近300个点，约5小时）
+          // 获取CVD历史数据（最近2880个点，约48小时）
           const { data: cvdData } = await supabase
             .from('cvd_data')
             .select('cvd, price, open_interest, timestamp')
             .eq('symbol', symbol)
             .order('timestamp', { ascending: false })
-            .limit(300);
+            .limit(2880);
 
           if (!cvdData || cvdData.length < 30) {
             return null; // 数据不足
