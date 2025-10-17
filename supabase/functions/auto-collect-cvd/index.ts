@@ -32,6 +32,38 @@ interface TradeData {
   isBuyerMaker: boolean;
 }
 
+// 带重试与指数退避的请求，处理 418/429/5xx 等限流/临时错误
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retries = 3,
+  baseDelay = 600
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: options.signal ?? AbortSignal.timeout(12000),
+      });
+      if (res.ok) return res;
+      const status = res.status;
+      if (retries > 0 && (status === 418 || status === 429 || status >= 500)) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+        await new Promise((r) => setTimeout(r, delay));
+        retries--; attempt++;
+        continue;
+      }
+      throw new Error(`Binance API error: ${status}`);
+    } catch (err) {
+      if (retries <= 0) throw err;
+      const delay = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+      await new Promise((r) => setTimeout(r, delay));
+      retries--; attempt++;
+    }
+  }
+}
+
 serve(async (req) => {
   const origin = req.headers.get('Origin');
   const corsHeaders = getCorsHeaders(origin);
@@ -73,7 +105,7 @@ serve(async (req) => {
     console.log(`📊 Processing ${monitoredCoins.length} coins:`, monitoredCoins.map(c => c.symbol).join(', '));
 
     // 并行处理所有币对（限制并发数以避免压力过大）
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 3; // 限低并发，降低被限流概率
     const results = [];
     
     for (let i = 0; i < monitoredCoins.length; i += BATCH_SIZE) {
@@ -83,9 +115,9 @@ serve(async (req) => {
       );
       results.push(...batchResults);
       
-      // 小延迟避免触发Binance限速
+      // 延迟避免触发Binance限速
       if (i + BATCH_SIZE < monitoredCoins.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1200));
       }
     }
 
@@ -132,15 +164,31 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
     // URL encode the symbol for safety
     const encodedSymbol = encodeURIComponent(symbol);
 
-    // 获取最近1000笔交易
-    const response = await fetch(
-      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${encodedSymbol}&limit=1000`,
-      { signal: AbortSignal.timeout(10000) } // 10秒超时
-    );
+    // 如果该币对历史点过少，自动触发回填以补齐历史
+    try {
+      const { count } = await supabase
+        .from('cvd_data')
+        .select('*', { head: true, count: 'exact' })
+        .eq('symbol', symbol);
 
-    if (!response.ok) {
-      throw new Error(`Binance API error for ${symbol}: ${response.status}`);
+      if (!count || count < 60) { // 少于约1小时的数据
+        const { error: bfErr } = await supabase.functions.invoke('backfill-cvd-history', {
+          body: { symbol, hoursBack: 24 },
+        });
+        if (bfErr) {
+          console.warn(`  Backfill error for ${symbol}:`, bfErr);
+        } else {
+          console.log(`  ⏪ Backfilled ${symbol} for 24h`);
+        }
+      }
+    } catch (e) {
+      console.warn(`  Backfill check failed for ${symbol}:`, e);
     }
+
+    // 获取最近1000笔交易（带重试，避免418/429限流）
+    const response = await fetchWithRetry(
+      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${encodedSymbol}&limit=1000`
+    );
 
     const trades: TradeData[] = await response.json();
 
