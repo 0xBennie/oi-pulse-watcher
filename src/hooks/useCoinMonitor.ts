@@ -67,18 +67,21 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
           return null;
         }
 
-        // Calculate 5m price change
+        // Calculate 5m price change - 使用函数式更新避免依赖
         const currentPrice = priceData.price;
-        const lastKnownPrice = priceHistory[coin.base]?.price;
-        const priceChangePercent5m = lastKnownPrice
-          ? calculatePercentageChange(currentPrice, lastKnownPrice)
-          : 0;
-
-        // Update price history
-        setPriceHistory((prev) => ({
-          ...prev,
-          [coin.base]: { price: currentPrice, timestamp: Date.now() },
-        }));
+        let priceChangePercent5m = 0;
+        
+        setPriceHistory((prev) => {
+          const lastKnownPrice = prev[coin.base]?.price;
+          priceChangePercent5m = lastKnownPrice
+            ? calculatePercentageChange(currentPrice, lastKnownPrice)
+            : 0;
+          
+          return {
+            ...prev,
+            [coin.base]: { price: currentPrice, timestamp: Date.now() },
+          };
+        });
 
         // Calculate OI change (注意：oiHistory是倒序的，最新的在前)
         const currentOI = oiHistory[0]; // 最新数据
@@ -169,10 +172,11 @@ export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷
     const validResults = results.filter((r): r is MonitorDataWithHistory => r !== null);
     setMonitorData(validResults);
     setLastUpdate(new Date());
-  }, [priceHistory]);
+  }, []); // 移除 priceHistory 依赖，使用函数式更新
 
   useEffect(() => {
-    fetchMonitorData();
+    setLoading(true);
+    fetchMonitorData().finally(() => setLoading(false));
 
     const interval = setInterval(() => {
       fetchMonitorData();
