@@ -107,6 +107,26 @@ export function CoinManagement() {
     }
   };
 
+  const clearAllCoins = async () => {
+    if (!confirm(`确定要删除所有 ${coins.length} 个监控币对吗？历史数据不会被删除。`)) {
+      return;
+    }
+
+    setLoading(true);
+    const { error } = await supabase
+      .from('monitored_coins')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // 删除所有记录
+
+    if (error) {
+      toast.error('清空失败');
+    } else {
+      toast.success('已清空所有监控币对');
+      fetchCoins();
+    }
+    setLoading(false);
+  };
+
   const testAutoCollect = async () => {
     setLoading(true);
     toast.loading('正在手动触发数据收集...');
@@ -136,14 +156,25 @@ export function CoinManagement() {
               添加要24/7持续监控的币对（每3分钟自动收集CVD数据）
             </CardDescription>
           </div>
-          <Button 
-            onClick={testAutoCollect} 
-            disabled={loading || coins.length === 0}
-            variant="outline"
-            size="sm"
-          >
-            手动触发收集
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              onClick={clearAllCoins} 
+              disabled={loading || coins.length === 0}
+              variant="outline"
+              size="sm"
+            >
+              <Trash2 className="w-4 h-4 mr-1" />
+              清空所有
+            </Button>
+            <Button 
+              onClick={testAutoCollect} 
+              disabled={loading || coins.length === 0}
+              variant="outline"
+              size="sm"
+            >
+              手动触发收集
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
