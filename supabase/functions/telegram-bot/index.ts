@@ -165,14 +165,41 @@ serve(async (req) => {
       }
 
     } else if (text.startsWith('/stats')) {
-      // 市场统计数据
+      // 市场统计数据 - 支持自定义时间周期
       try {
+        // 解析时间周期参数
+        const args = text.split(' ');
+        const period = args[1] || '1h'; // 默认1小时
+        
+        // 定义支持的时间周期及其对应的数据点索引
+        const periodMap: { [key: string]: { index: number; label: string; needsBinance: boolean } } = {
+          '5m': { index: 3, label: '5分钟', needsBinance: false },
+          '15m': { index: 9, label: '15分钟', needsBinance: false },
+          '30m': { index: 18, label: '30分钟', needsBinance: false },
+          '1h': { index: 30, label: '1小时', needsBinance: false },
+          '4h': { index: 120, label: '4小时', needsBinance: false },
+          '24h': { index: 0, label: '24小时', needsBinance: true }, // 使用Binance数据
+        };
+
+        if (!periodMap[period]) {
+          await sendTelegramMessage(
+            botToken, 
+            chatId, 
+            `❌ 无效的时间周期\n\n支持的周期：\n5m, 15m, 30m, 1h, 4h, 24h\n\n示例：/stats 30m`
+          );
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
+        const { index, label, needsBinance } = periodMap[period];
+
         // 获取所有启用的币对
         const { data: coins } = await supabase
           .from('monitored_coins')
           .select('symbol, name')
           .eq('enabled', true)
-          .limit(10);
+          .limit(20);
 
         if (!coins || coins.length === 0) {
           await sendTelegramMessage(botToken, chatId, '❌ 暂无监控币对');
@@ -181,11 +208,29 @@ serve(async (req) => {
           });
         }
 
-        // 获取每个币对的多时间周期数据
+        // 获取每个币对的数据
         const statsPromises = coins.map(async (coin) => {
           const symbol = coin.symbol;
           
-          // 获取CVD历史数据（最近2880个点，约48小时）
+          // 对于24h，直接使用Binance数据
+          if (needsBinance) {
+            const binanceRes = await fetch(
+              `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
+            );
+            if (!binanceRes.ok) return null;
+            
+            const binance24h = await binanceRes.json();
+            
+            return {
+              symbol: coin.name,
+              oi: parseFloat(binance24h.priceChangePercent), // 用价格变化代替（24h OI变化需要额外计算）
+              cvd: 0, // 24h CVD暂不支持
+              price: parseFloat(binance24h.priceChangePercent),
+              volume: parseFloat(binance24h.quoteVolume) / 1000000, // 转换为百万
+            };
+          }
+
+          // 获取CVD历史数据
           const { data: cvdData } = await supabase
             .from('cvd_data')
             .select('cvd, price, open_interest, timestamp')
@@ -193,24 +238,13 @@ serve(async (req) => {
             .order('timestamp', { ascending: false })
             .limit(2880);
 
-          if (!cvdData || cvdData.length < 30) {
+          if (!cvdData || cvdData.length < index + 5) {
             return null; // 数据不足
           }
 
-          // 获取24小时Binance数据
-          const binanceRes = await fetch(
-            `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${symbol}`
-          );
-          const binance24h = binanceRes.ok ? await binanceRes.json() : null;
-
-          // 计算各时间周期变化率
+          // 计算变化率
           const now = cvdData[0];
-          const m5 = cvdData[3] || cvdData[2];   // ~5分钟前
-          const m15 = cvdData[9] || cvdData[8];  // ~15分钟前
-          const h1 = cvdData[30] || cvdData[29]; // ~1小时前
-          const h4 = cvdData[120] || cvdData[119]; // ~4小时前
-          const h24 = cvdData[144] || cvdData[143]; // ~24小时前
-          const h48 = cvdData[288] || cvdData[287]; // ~48小时前
+          const prev = cvdData[index] || cvdData[index - 1];
 
           const calc = (curr: any, prev: any, field: string) => {
             if (!prev || !curr) return 0;
@@ -221,45 +255,40 @@ serve(async (req) => {
 
           return {
             symbol: coin.name,
-            oi_5m: calc(now, m5, 'open_interest'),
-            oi_15m: calc(now, m15, 'open_interest'),
-            oi_1h: calc(now, h1, 'open_interest'),
-            oi_4h: calc(now, h4, 'open_interest'),
-            oi_24h: calc(now, h24, 'open_interest'),
-            oi_48h: calc(now, h48, 'open_interest'),
-            cvd_5m: calc(now, m5, 'cvd'),
-            cvd_15m: calc(now, m15, 'cvd'),
-            cvd_1h: calc(now, h1, 'cvd'),
-            price_5m: calc(now, m5, 'price'),
-            price_15m: calc(now, m15, 'price'),
-            price_1h: calc(now, h1, 'price'),
-            price_24h: binance24h ? parseFloat(binance24h.priceChangePercent) : 0,
+            oi: calc(now, prev, 'open_interest'),
+            cvd: calc(now, prev, 'cvd'),
+            price: calc(now, prev, 'price'),
+            volume: 0, // CVD数据没有交易量
           };
         });
 
         const allStats = (await Promise.all(statsPromises)).filter(s => s !== null);
         
-        // 按OI 1小时涨幅排序
-        allStats.sort((a, b) => Math.abs(b!.oi_1h) - Math.abs(a!.oi_1h));
+        // 按OI变化率排序
+        allStats.sort((a, b) => Math.abs(b!.oi) - Math.abs(a!.oi));
 
         // 格式化输出
         const formatNum = (n: number) => {
           const sign = n >= 0 ? '+' : '';
-          return `${sign}${n.toFixed(1)}`;
+          return `${sign}${n.toFixed(2)}%`;
         };
 
-        const pad = (str: string, len: number) => str.padEnd(len, ' ');
+        const formatVol = (v: number) => {
+          if (v >= 1000) return `${(v / 1000).toFixed(2)}B`;
+          if (v >= 1) return `${v.toFixed(2)}M`;
+          return `${(v * 1000).toFixed(0)}K`;
+        };
 
-        let message = '📊 市场监控（按OI-1h排序）\n\n';
+        let message = `📊 OI-${label}涨幅榜\n\n`;
         
-        allStats.slice(0, 10).forEach((stat, i) => {
+        allStats.slice(0, 15).forEach((stat, i) => {
           const s = stat!;
-          message += `${i + 1}. ${s.symbol}\n`;
-          message += `     5m    15m    1h     4h    24h    48h\n`;
-          message += `OI ${pad(formatNum(s.oi_5m), 5)} ${pad(formatNum(s.oi_15m), 6)} ${pad(formatNum(s.oi_1h), 6)} ${pad(formatNum(s.oi_4h), 5)} ${pad(formatNum(s.oi_24h), 6)} ${formatNum(s.oi_48h)}\n`;
-          message += `CV ${pad(formatNum(s.cvd_5m), 5)} ${pad(formatNum(s.cvd_15m), 6)} ${pad(formatNum(s.cvd_1h), 6)} -- -- --\n`;
-          message += `P  ${pad(formatNum(s.price_5m), 5)} ${pad(formatNum(s.price_15m), 6)} ${pad(formatNum(s.price_1h), 6)} -- ${pad(formatNum(s.price_24h), 6)} --\n\n`;
+          const volStr = needsBinance && s.volume > 0 ? ` ${formatVol(s.volume)}` : '';
+          message += `${i + 1}. ${s.symbol}${volStr}\n`;
+          message += `   OI ${formatNum(s.oi)}  CVD ${formatNum(s.cvd)}  P ${formatNum(s.price)}\n\n`;
         });
+
+        message += `💡 使用示例：\n/stats 5m  /stats 30m  /stats 1h`;
 
         await sendTelegramMessage(botToken, chatId, message);
       } catch (error) {
