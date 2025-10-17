@@ -212,7 +212,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
 
     const trades: TradeData[] = await response.json();
 
-    // 计算CVD (不再存储原始交易数据)
+    // 计算CVD（滚动窗口，仅反映最近1000笔交易）
     let cvd = 0;
     
     for (const trade of trades) {
@@ -225,17 +225,8 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
     const latestPrice = parseFloat(trades[trades.length - 1].price);
     const latestTimestamp = trades[trades.length - 1].time;
 
-    // 获取上一个CVD值
-    const { data: prevCvdData } = await supabase
-      .from('cvd_data')
-      .select('cvd')
-      .eq('symbol', symbol)
-      .order('timestamp', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const prevCvd = prevCvdData?.cvd ? parseFloat(prevCvdData.cvd) : 0;
-    const cumulativeCvd = prevCvd + cvd;
+    // 不再累积，直接使用当前1000笔交易的CVD
+    const currentCvd = cvd;
 
     // 获取最新 OI（5m 聚合）并与CVD一起存储
     let openInterest: number | null = null;
@@ -259,7 +250,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
       .insert({
         symbol,
         timestamp: latestTimestamp,
-        cvd: cumulativeCvd,
+        cvd: currentCvd,
         price: latestPrice,
         open_interest: openInterest,
         open_interest_value: openInterestValue,
@@ -297,7 +288,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
     const alertResult = await determineAlert(
       symbol,
       cvd,
-      cumulativeCvd,
+      currentCvd,
       latestPrice,
       oiChangePercent,
       supabase
@@ -326,8 +317,8 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         symbol,
         alert_type: alertResult.alertType,
         price: latestPrice,
-        cvd: cumulativeCvd,
-        cvd_change_percent: (cvd / Math.abs(prevCvd || 1)) * 100,
+        cvd: currentCvd,
+        cvd_change_percent: alertResult.priceChangePercent,
         price_change_percent: alertResult.priceChangePercent,
         oi_change_percent: oiChangePercent,
         details: {
