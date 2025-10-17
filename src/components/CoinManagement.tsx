@@ -153,7 +153,7 @@ export function CoinManagement() {
           <div>
             <CardTitle>监控币对管理</CardTitle>
             <CardDescription>
-              添加要24/7持续监控的币对（每3分钟自动收集CVD数据）
+              添加要24/7持续监控的币对（每1分钟自动收集CVD数据）
             </CardDescription>
           </div>
           <div className="flex gap-2">
@@ -251,7 +251,7 @@ export function CoinManagement() {
           <p className="mb-1">💡 提示：</p>
           <ul className="list-disc list-inside space-y-1 pl-2">
             <li>币对格式必须与币安期货一致（如: BTCUSDT, ETHUSDT）</li>
-            <li>定时任务每3分钟自动执行一次</li>
+            <li>定时任务每1分钟自动执行一次</li>
             <li>可以随时暂停/启用单个币对的监控</li>
             <li>删除币对不会删除历史CVD数据</li>
           </ul>

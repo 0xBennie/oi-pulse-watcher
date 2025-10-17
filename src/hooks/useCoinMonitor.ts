@@ -15,7 +15,7 @@ interface HistoricalStorage {
 
 const MAX_HISTORY_POINTS = 360; // 18小时历史 (360个点 * 3分钟 = 1080分钟)
 
-export function useCoinMonitor(refreshInterval: number = 180000) { // 3分钟刷新一次
+export function useCoinMonitor(refreshInterval: number = 60000) { // 1分钟刷新一次
   const [monitorData, setMonitorData] = useState<MonitorDataWithHistory[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);

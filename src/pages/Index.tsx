@@ -41,7 +41,7 @@ const Index = () => {
           <div>
             <h1 className="text-4xl font-bold tracking-tight">CVD与价格监控</h1>
             <p className="text-muted-foreground mt-2">
-              每3分钟自动刷新 • 强告警: 持仓量Δ ≥10% 且 5m涨幅 ≥2% | 中告警: 持仓量Δ ≥8% 且 5m涨幅 ≥1.5% | 弱告警: 持仓量Δ ≥5% 或 5m涨幅 ≥1%
+              每1分钟自动刷新 • 强告警: 持仓量Δ ≥10% 且 5m涨幅 ≥2% | 中告警: 持仓量Δ ≥8% 且 5m涨幅 ≥1.5% | 弱告警: 持仓量Δ ≥5% 或 5m涨幅 ≥1%
             </p>
           </div>
           <Button
@@ -112,7 +112,7 @@ const Index = () => {
           <CardHeader>
             <CardTitle>实时监控</CardTitle>
             <CardDescription>
-              24/7自动监控 • 每3分钟更新 • 橙色线: CVD累积量 • 紫色虚线: 价格走势
+              24/7自动监控 • 每1分钟更新 • 橙色线: CVD累积量 • 紫色虚线: 价格走势
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -183,7 +183,7 @@ const Index = () => {
         </Card>
 
         <footer className="text-center text-sm text-muted-foreground py-4">
-          <p>数据来源：币安永续合约 API • 每3分钟更新一次 • CVD = 累积买卖量差</p>
+          <p>数据来源：币安永续合约 API • 每1分钟更新一次 • CVD = 累积买卖量差</p>
         </footer>
       </div>
     </div>
