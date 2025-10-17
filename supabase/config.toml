@@ -21,3 +21,16 @@ verify_jwt = false
 
 [functions.backfill-cvd-history]
 verify_jwt = false
+
+[functions.telegram-bot]
+verify_jwt = false
+
+[functions.telegram-alert]
+verify_jwt = false
+
+# Cron job: 每1分钟检查并发送Telegram警报
+[[edge_runtime.scheduler]]
+enabled = true
+cron = "* * * * *"
+function_name = "telegram-alert"
+timeout = 60

@@ -26,6 +26,7 @@ export type Database = {
           price: number
           price_change_percent: number
           symbol: string
+          telegram_sent: boolean | null
         }
         Insert: {
           alert_type: string
@@ -38,6 +39,7 @@ export type Database = {
           price: number
           price_change_percent: number
           symbol: string
+          telegram_sent?: boolean | null
         }
         Update: {
           alert_type?: string
@@ -50,6 +52,7 @@ export type Database = {
           price?: number
           price_change_percent?: number
           symbol?: string
+          telegram_sent?: boolean | null
         }
         Relationships: []
       }
@@ -104,6 +107,36 @@ export type Database = {
           name?: string
           symbol?: string
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      telegram_users: {
+        Row: {
+          chat_id: string
+          created_at: string
+          id: string
+          subscribed: boolean
+          telegram_id: string
+          updated_at: string
+          username: string | null
+        }
+        Insert: {
+          chat_id: string
+          created_at?: string
+          id?: string
+          subscribed?: boolean
+          telegram_id: string
+          updated_at?: string
+          username?: string | null
+        }
+        Update: {
+          chat_id?: string
+          created_at?: string
+          id?: string
+          subscribed?: boolean
+          telegram_id?: string
+          updated_at?: string
+          username?: string | null
         }
         Relationships: []
       }
