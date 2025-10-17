@@ -107,11 +107,11 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('❌ Error in auto-collect-cvd:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    // Return generic error to client, log details server-side
     return new Response(
       JSON.stringify({ 
         success: false,
-        error: errorMessage 
+        error: 'Auto CVD collection failed' 
       }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -120,11 +120,21 @@ serve(async (req) => {
 
 async function processCoin(symbol: string, supabase: any): Promise<void> {
   try {
+    // Validate symbol format
+    const symbolPattern = /^[A-Z0-9]{1,10}USDT$/;
+    if (!symbolPattern.test(symbol)) {
+      console.error(`  Invalid symbol format: ${symbol}`);
+      throw new Error('Invalid symbol format');
+    }
+
     console.log(`  Processing ${symbol}...`);
+
+    // URL encode the symbol for safety
+    const encodedSymbol = encodeURIComponent(symbol);
 
     // 获取最近1000笔交易
     const response = await fetch(
-      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${symbol}&limit=1000`,
+      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${encodedSymbol}&limit=1000`,
       { signal: AbortSignal.timeout(10000) } // 10秒超时
     );
 

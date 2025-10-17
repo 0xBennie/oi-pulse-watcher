@@ -45,26 +45,31 @@ export function CoinManagement() {
       return;
     }
 
-    // 验证格式：应该类似 BTCUSDT
-    if (!/^[A-Z0-9]{6,20}$/.test(newSymbol)) {
-      toast.error('币对格式错误，例如: BTCUSDT');
+    // 验证格式：必须以USDT结尾
+    if (!/^[A-Z0-9]{1,10}USDT$/.test(newSymbol)) {
+      toast.error('币对格式错误，必须以USDT结尾，例如: BTCUSDT');
       return;
     }
 
     setLoading(true);
-    const { error } = await supabase
-      .from('monitored_coins')
-      .insert({
+    
+    // Use service role key via edge function for write operations
+    const { data, error } = await supabase.functions.invoke('manage-monitored-coins', {
+      body: {
+        action: 'insert',
         symbol: newSymbol.toUpperCase(),
-        name: newName.toUpperCase(),
-        enabled: true
-      });
+        name: newName.toUpperCase()
+      }
+    });
 
     if (error) {
-      if (error.code === '23505') {
+      toast.error('添加失败，请稍后重试');
+      console.error('Add coin error:', error);
+    } else if (data?.error) {
+      if (data.error.includes('duplicate') || data.error.includes('23505')) {
         toast.error('该币对已存在');
       } else {
-        toast.error('添加失败: ' + error.message);
+        toast.error('添加失败');
       }
     } else {
       toast.success(`已添加 ${newSymbol}`);
@@ -76,13 +81,17 @@ export function CoinManagement() {
   };
 
   const toggleCoin = async (id: string, currentEnabled: boolean) => {
-    const { error } = await supabase
-      .from('monitored_coins')
-      .update({ enabled: !currentEnabled })
-      .eq('id', id);
+    const { data, error } = await supabase.functions.invoke('manage-monitored-coins', {
+      body: {
+        action: 'toggle',
+        id,
+        enabled: !currentEnabled
+      }
+    });
 
-    if (error) {
+    if (error || data?.error) {
       toast.error('更新失败');
+      console.error('Toggle coin error:', error || data?.error);
     } else {
       toast.success(currentEnabled ? '已暂停监控' : '已启用监控');
       fetchCoins();
@@ -94,13 +103,16 @@ export function CoinManagement() {
       return;
     }
 
-    const { error } = await supabase
-      .from('monitored_coins')
-      .delete()
-      .eq('id', id);
+    const { data, error } = await supabase.functions.invoke('manage-monitored-coins', {
+      body: {
+        action: 'delete',
+        id
+      }
+    });
 
-    if (error) {
+    if (error || data?.error) {
       toast.error('删除失败');
+      console.error('Delete coin error:', error || data?.error);
     } else {
       toast.success(`已删除 ${symbol}`);
       fetchCoins();
@@ -113,13 +125,15 @@ export function CoinManagement() {
     }
 
     setLoading(true);
-    const { error } = await supabase
-      .from('monitored_coins')
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000'); // 删除所有记录
+    const { data, error } = await supabase.functions.invoke('manage-monitored-coins', {
+      body: {
+        action: 'clear'
+      }
+    });
 
-    if (error) {
+    if (error || data?.error) {
       toast.error('清空失败');
+      console.error('Clear coins error:', error || data?.error);
     } else {
       toast.success('已清空所有监控币对');
       fetchCoins();

@@ -54,20 +54,24 @@ serve(async (req) => {
       );
     }
 
-    // Validate symbol format (alphanumeric, max 20 chars, typically ends with USDT)
-    const symbolPattern = /^[A-Z0-9]{3,20}$/;
+    // Strict validation: must be alphanumeric and end with USDT
+    const symbolPattern = /^[A-Z0-9]{1,10}USDT$/;
     if (!symbolPattern.test(symbol)) {
+      console.error(`Invalid symbol format: ${symbol}`);
       return new Response(
         JSON.stringify({ error: 'Invalid symbol format' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    // URL encode the symbol for safety
+    const encodedSymbol = encodeURIComponent(symbol);
+
     console.log(`Collecting trades for ${symbol}`);
 
     // 获取最近1000笔交易（使用trades而不是aggTrades，aggTrades没有isBuyerMaker字段）
     const response = await fetch(
-      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${symbol}&limit=1000`
+      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${encodedSymbol}&limit=1000`
     );
 
     if (!response.ok) {
@@ -152,9 +156,9 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error in collect-cvd function:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    // Return generic error to client, log details server-side
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ error: 'Failed to collect CVD data' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
