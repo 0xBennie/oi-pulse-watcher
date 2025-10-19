@@ -115,6 +115,8 @@ export function useCoinMonitor(refreshInterval: number = 60000) { // 1分钟刷�
           return null;
         }
 
+        const sortedOIHistory = [...oiHistory].sort((a, b) => b.timestamp - a.timestamp);
+
         // Calculate 5m price change - 使用函数式更新避免依赖
         const currentPrice = priceData.price;
         const now = Date.now();
@@ -142,13 +144,15 @@ export function useCoinMonitor(refreshInterval: number = 60000) { // 1分钟刷�
           { price: currentPrice, timestamp: now },
         ];
 
-        // Calculate OI change (注意：oiHistory是倒序的，最新的在前)
-        const currentOI = oiHistory[0]; // 最新数据
+        // Calculate OI change (注意：sortedOIHistory是倒序的，最新的在前)
+        const currentOI = sortedOIHistory[0]; // 最新数据
         const currentOITimestamp = currentOI.timestamp;
         const targetOITimestamp = currentOITimestamp - 5 * 60 * 1000;
 
-        const previousOI = oiHistory.slice(1).find((item) => item.timestamp <= targetOITimestamp)
-          || oiHistory[oiHistory.length - 1];
+        const previousOI = sortedOIHistory
+          .slice(1)
+          .find((item) => item.timestamp <= targetOITimestamp)
+          || sortedOIHistory[sortedOIHistory.length - 1];
 
         const oiChangePercent = previousOI
           ? calculatePercentageChange(
@@ -170,13 +174,16 @@ export function useCoinMonitor(refreshInterval: number = 60000) { // 1分钟刷�
             || cvdHistory[0];
 
           if (previousCVDPoint) {
-            cvdChangePercent = calculatePercentageChange(currentCVD, previousCVDPoint.cvd);
+            const previousCVD = previousCVDPoint.cvd;
+            cvdChangePercent = Math.abs(previousCVD) > 0
+              ? ((currentCVD - previousCVD) / Math.abs(previousCVD)) * 100
+              : 0;
           }
         }
 
         // 检测庄家信号
         const whaleSignal = detectWhaleSignal(
-          oiHistory,
+          sortedOIHistory,
           priceChangePercent5m,
           priceData.quoteVolume || 0
         );
