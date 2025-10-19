@@ -62,7 +62,7 @@ serve(async (req) => {
     // 获取历史CVD数据（先按时间降序取最近的安全数量，再在内存中反转为升序返回）
     const { data, error } = await supabase
       .from('cvd_data')
-      .select('timestamp, cvd, price')
+      .select('timestamp, cvd, price, open_interest, open_interest_value')
       .eq('symbol', symbol)
       .order('timestamp', { ascending: false })
       .limit(safeLimit);
@@ -72,8 +72,25 @@ serve(async (req) => {
       throw error;
     }
 
+    type CvdRow = {
+      timestamp: number;
+      cvd: number;
+      price: number;
+      open_interest?: number | null;
+      open_interest_value?: number | null;
+    };
+
+    const rows = ((data ?? []) as CvdRow[]);
+    const serialized = [...rows].reverse().map((item) => ({
+      timestamp: item.timestamp,
+      cvd: item.cvd,
+      price: item.price,
+      openInterest: item.open_interest ?? null,
+      openInterestValue: item.open_interest_value ?? null,
+    }));
+
     return new Response(
-      JSON.stringify({ data: (data || []).reverse() }),
+      JSON.stringify({ data: serialized }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

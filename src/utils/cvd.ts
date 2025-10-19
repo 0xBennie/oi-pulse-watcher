@@ -4,6 +4,8 @@ export interface CVDDataPoint {
   timestamp: number;
   cvd: number;
   price: number;
+  openInterest?: number | null;
+  openInterestValue?: number | null;
 }
 
 export async function collectCVDData(symbol: string): Promise<void> {
