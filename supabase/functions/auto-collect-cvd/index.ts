@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const ALLOWED_ORIGINS = [
   'https://lovable.dev',
@@ -24,6 +24,18 @@ function getCorsHeaders(origin: string | null): HeadersInit {
 
 const BINANCE_API_BASE = 'https://fapi.binance.com';
 
+type GenericSchema = {
+  Tables: Record<string, unknown>;
+  Views: Record<string, unknown>;
+  Functions: Record<string, unknown>;
+  Enums: Record<string, unknown>;
+  CompositeTypes: Record<string, unknown>;
+};
+
+type GenericDatabase = Record<string, GenericSchema>;
+
+type SupabaseServiceClient = SupabaseClient<GenericDatabase>;
+
 interface TradeData {
   id: number;
   price: string;
@@ -31,6 +43,23 @@ interface TradeData {
   time: number;
   isBuyerMaker: boolean;
 }
+
+interface OpenInterestRow {
+  open_interest: number | string | null;
+}
+
+interface CvdDataRow {
+  cvd: number | string;
+  price: number | string;
+  timestamp: number | string;
+}
+
+const toNumber = (value: number | string | null | undefined): number => {
+  if (value === null || value === undefined) {
+    return NaN;
+  }
+  return typeof value === 'number' ? value : parseFloat(value);
+};
 
 // 带重试与指数退避的请求，处理 418/429/5xx 等限流/临时错误
 async function fetchWithRetry(
@@ -75,7 +104,7 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase: SupabaseServiceClient = createClient(supabaseUrl, supabaseKey);
 
     console.log('🔄 Starting auto CVD collection...');
 
@@ -170,7 +199,7 @@ serve(async (req) => {
   }
 });
 
-async function processCoin(symbol: string, supabase: any): Promise<void> {
+async function processCoin(symbol: string, supabase: SupabaseServiceClient): Promise<void> {
   try {
     // Validate symbol format
     const symbolPattern = /^[A-Z0-9]{1,10}USDT$/;
@@ -272,8 +301,9 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         .limit(3);
 
       if (oiRows && oiRows.length >= 3) {
-        const oiNow = parseFloat(oiRows[0].open_interest as any);
-        const oiPrev = parseFloat(oiRows[2].open_interest as any);
+        const typedRows = oiRows as OpenInterestRow[];
+        const oiNow = toNumber(typedRows[0].open_interest);
+        const oiPrev = toNumber(typedRows[2].open_interest);
         if (isFinite(oiNow) && isFinite(oiPrev) && Math.abs(oiPrev) > 0) {
           oiChangePercent = ((oiNow - oiPrev) / Math.abs(oiPrev)) * 100;
         }
@@ -340,7 +370,7 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
 async function determineAlert(
   symbol: string,
   _oiChangePercent: number,
-  supabase: any
+  supabase: SupabaseServiceClient
 ): Promise<{ alertType: string; priceChangePercent: number; cvdChangePercent: number }> {
   try {
     // 获取历史数据用于计算变化率和背离
@@ -355,24 +385,30 @@ async function determineAlert(
       return { alertType: 'NONE', priceChangePercent: 0, cvdChangePercent: 0 };
     }
 
-    const latestEntry = recentData[0];
+    const typedRecentData = (recentData as CvdDataRow[]).map((entry) => ({
+      cvd: toNumber(entry.cvd),
+      price: toNumber(entry.price),
+      timestamp: Number(entry.timestamp)
+    }));
+
+    const latestEntry = typedRecentData[0];
     const currentTimestamp = Number(latestEntry.timestamp);
     const fiveMinutesAgo = currentTimestamp - 5 * 60 * 1000;
 
     const findReferenceEntry = () => {
-      for (let i = 1; i < recentData.length; i++) {
-        const entryTimestamp = Number(recentData[i].timestamp);
+      for (let i = 1; i < typedRecentData.length; i++) {
+        const entryTimestamp = Number(typedRecentData[i].timestamp);
         if (entryTimestamp <= fiveMinutesAgo) {
-          return recentData[i];
+          return typedRecentData[i];
         }
       }
-      return recentData[recentData.length - 1];
+      return typedRecentData[typedRecentData.length - 1];
     };
 
     const referenceEntry = findReferenceEntry();
 
-    const currentCVD = parseFloat(latestEntry.cvd);
-    const previousCVD = parseFloat(referenceEntry?.cvd ?? latestEntry.cvd);
+    const currentCVD = latestEntry.cvd;
+    const previousCVD = referenceEntry?.cvd ?? latestEntry.cvd;
     const cvdChangePercent = Math.abs(previousCVD) > 0
       ? ((currentCVD - previousCVD) / Math.abs(previousCVD)) * 100
       : 0;
@@ -383,8 +419,8 @@ async function determineAlert(
       return { alertType: 'NONE', priceChangePercent: 0, cvdChangePercent: 0 };
     }
 
-    const priceNow = parseFloat(latestEntry.price);
-    const previousPrice = parseFloat(referenceEntry?.price ?? latestEntry.price);
+    const priceNow = latestEntry.price;
+    const previousPrice = referenceEntry?.price ?? latestEntry.price;
     const priceChangePercent = previousPrice !== 0
       ? ((priceNow - previousPrice) / previousPrice) * 100
       : 0;
@@ -410,13 +446,12 @@ async function determineAlert(
     }
 
     // 5. TOP_DIVERGENCE: 近60根内价格创新高但CVD未创新高
-    if (recentData.length >= 60) {
-      const prices = recentData.map((d: any) => parseFloat(d.price));
-      const cvds = recentData.map((d: any) => parseFloat(d.cvd));
-      
+    if (typedRecentData.length >= 60) {
+      const prices = typedRecentData.map((d) => d.price);
+      const cvds = typedRecentData.map((d) => d.cvd);
       const maxPrice = Math.max(...prices);
       const maxCVD = Math.max(...cvds);
-      
+
       // 如果当前价格是新高（≥99.9%），但CVD显著背离（<90%）
       if (priceNow >= maxPrice * 0.999 && currentCVD < maxCVD * 0.90) {
         return { alertType: 'TOP_DIVERGENCE', priceChangePercent, cvdChangePercent };

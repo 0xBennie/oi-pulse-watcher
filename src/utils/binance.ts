@@ -1,5 +1,20 @@
 import { PriceData, OIData } from '@/types/coin';
 
+interface BinanceTickerResponse {
+  symbol: string;
+  lastPrice: string;
+  priceChangePercent: string;
+  volume: string;
+  quoteVolume: string;
+}
+
+interface BinanceOpenInterestResponse {
+  symbol: string;
+  timestamp: number;
+  sumOpenInterest: string;
+  sumOpenInterestValue: string;
+}
+
 const BINANCE_API_BASE = 'https://fapi.binance.com';
 
 export async function fetchPriceData(symbol: string): Promise<PriceData | null> {
@@ -13,8 +28,8 @@ export async function fetchPriceData(symbol: string): Promise<PriceData | null> 
       return null;
     }
 
-    const data = await response.json();
-    
+    const data: BinanceTickerResponse = await response.json();
+
     return {
       symbol: data.symbol,
       price: parseFloat(data.lastPrice),
@@ -39,9 +54,9 @@ export async function fetchOIHistory(symbol: string, limit: number = 4): Promise
       return [];
     }
 
-    const data = await response.json();
-    
-    return data.map((item: any) => ({
+    const data: BinanceOpenInterestResponse[] = await response.json();
+
+    return data.map((item) => ({
       symbol: item.symbol,
       timestamp: item.timestamp,
       sumOpenInterest: parseFloat(item.sumOpenInterest),

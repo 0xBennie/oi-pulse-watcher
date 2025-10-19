@@ -41,6 +41,28 @@ interface TelegramUpdate {
   message?: TelegramMessage;
 }
 
+interface CvdSnapshot {
+  cvd: number | string;
+  price: number | string;
+  open_interest: number | string | null;
+  timestamp: number | string;
+}
+
+interface CoinStats {
+  symbol: string;
+  oi: number;
+  cvd: number;
+  price: number;
+  volume: number;
+}
+
+const toNumeric = (value: number | string | null | undefined): number => {
+  if (value === null || value === undefined) {
+    return NaN;
+  }
+  return typeof value === 'number' ? value : parseFloat(value);
+};
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -253,14 +275,18 @@ serve(async (req) => {
           }
 
           // 计算变化率
-          const now = cvdData[0];
-          const prev = cvdData[index] || cvdData[index - 1];
+          const snapshots = cvdData as CvdSnapshot[];
+          const now = snapshots[0];
+          const prev = snapshots[index] || snapshots[index - 1];
 
-          const calc = (curr: any, prev: any, field: string) => {
-            if (!prev || !curr) return 0;
-            const c = parseFloat(curr[field]);
-            const p = parseFloat(prev[field]);
-            return p !== 0 ? ((c - p) / Math.abs(p)) * 100 : 0;
+          const calc = (curr: CvdSnapshot | undefined, previous: CvdSnapshot | undefined, field: keyof CvdSnapshot) => {
+            if (!curr || !previous) return 0;
+            const currentValue = toNumeric(curr[field]);
+            const previousValue = toNumeric(previous[field]);
+            if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue) || previousValue === 0) {
+              return 0;
+            }
+            return ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
           };
 
           return {
@@ -269,13 +295,13 @@ serve(async (req) => {
             cvd: calc(now, prev, 'cvd'),
             price: calc(now, prev, 'price'),
             volume: 0, // CVD数据没有交易量
-          };
+          } satisfies CoinStats;
         });
 
-        const allStats = (await Promise.all(statsPromises)).filter(s => s !== null);
-        
+        const allStats = (await Promise.all(statsPromises)).filter((s): s is CoinStats => s !== null);
+
         // 按OI变化率排序
-        allStats.sort((a, b) => Math.abs(b!.oi) - Math.abs(a!.oi));
+        allStats.sort((a, b) => Math.abs(b.oi) - Math.abs(a.oi));
 
         // 格式化输出
         const formatNum = (n: number) => {

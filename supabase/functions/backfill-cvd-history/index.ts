@@ -72,7 +72,7 @@ serve(async (req) => {
     const encodedSymbol = encodeURIComponent(symbol);
     
     // 分批获取数据，每次最多1000条
-    let allTrades: AggTrade[] = [];
+    const allTrades: AggTrade[] = [];
     let currentStartTime = startTime;
     let batchCount = 0;
     const maxBatches = 100; // 限制最大批次数，防止无限循环
