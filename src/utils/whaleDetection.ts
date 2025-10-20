@@ -1,5 +1,12 @@
 import { WhaleSignal, WhaleSignalType, OIData } from '@/types/coin';
 
+const safePercentageChange = (current: number, previous: number): number => {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || Math.abs(previous) < 1e-8) {
+    return 0;
+  }
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
 /**
  * 检测庄家行为信号
  * @param oiHistory OI历史数据（按时间倒序，最新的在前）
@@ -17,7 +24,7 @@ export function detectWhaleSignal(
   // 计算5分钟和10分钟的OI变化
   const latest = oiHistory[0];
   const prev5m = oiHistory[1];
-  const oiChange5m = ((latest.sumOpenInterestValue - prev5m.sumOpenInterestValue) / prev5m.sumOpenInterestValue) * 100;
+  const oiChange5m = safePercentageChange(latest.sumOpenInterestValue, prev5m.sumOpenInterestValue);
 
   // 计算OI绝对值（百万USDT）
   const oiValueInMillions = latest.sumOpenInterestValue / 1_000_000;
@@ -65,10 +72,10 @@ export function detectWhaleSignal(
   // 条件：10分钟内OI先增≥20%后降≥15% + 价格震荡但收盘几乎不变
   if (oiHistory.length >= 3) {
     const prev10m = oiHistory[2];
-    const oiChange10m = ((latest.sumOpenInterestValue - prev10m.sumOpenInterestValue) / prev10m.sumOpenInterestValue) * 100;
+    const oiChange10m = safePercentageChange(latest.sumOpenInterestValue, prev10m.sumOpenInterestValue);
     const midPoint = oiHistory[1];
-    const oiChangeFirst5m = ((midPoint.sumOpenInterestValue - prev10m.sumOpenInterestValue) / prev10m.sumOpenInterestValue) * 100;
-    const oiChangeSecond5m = ((latest.sumOpenInterestValue - midPoint.sumOpenInterestValue) / midPoint.sumOpenInterestValue) * 100;
+    const oiChangeFirst5m = safePercentageChange(midPoint.sumOpenInterestValue, prev10m.sumOpenInterestValue);
+    const oiChangeSecond5m = safePercentageChange(latest.sumOpenInterestValue, midPoint.sumOpenInterestValue);
 
     // 先增后减的模式
     if (

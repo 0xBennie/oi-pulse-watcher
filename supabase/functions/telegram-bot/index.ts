@@ -46,6 +46,7 @@ interface CvdSnapshot {
   cvd: number | string;
   price: number | string;
   open_interest: number | string | null;
+  open_interest_value?: number | string | null;
   timestamp: number | string;
 }
 
@@ -62,6 +63,46 @@ const toNumeric = (value: number | string | null | undefined): number => {
     return NaN;
   }
   return typeof value === 'number' ? value : parseFloat(value);
+};
+
+const toNullableNumeric = (value: number | string | null | undefined): number | null => {
+  const numeric = toNumeric(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+interface NormalizedSnapshot {
+  timestamp: number;
+  cvd: number;
+  price: number;
+  openInterest: number | null;
+}
+
+const normalizeSnapshot = (snapshot: CvdSnapshot): NormalizedSnapshot => ({
+  timestamp: Number(snapshot.timestamp),
+  cvd: toNumeric(snapshot.cvd),
+  price: toNumeric(snapshot.price),
+  openInterest: toNullableNumeric(snapshot.open_interest_value ?? snapshot.open_interest ?? null),
+});
+
+const safePercentChange = (current: number, previous: number): number => {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || Math.abs(previous) < 1e-8) {
+    return 0;
+  }
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
+const findSnapshotAtOffset = (snapshots: NormalizedSnapshot[], minutes: number): NormalizedSnapshot | undefined => {
+  if (snapshots.length < 2) {
+    return undefined;
+  }
+  const latestTimestamp = snapshots[0].timestamp;
+  const targetTimestamp = latestTimestamp - minutes * 60 * 1000;
+  for (let i = 1; i < snapshots.length; i++) {
+    if (snapshots[i].timestamp <= targetTimestamp) {
+      return snapshots[i];
+    }
+  }
+  return undefined;
 };
 
 async function fetchWithRetry(
@@ -252,14 +293,14 @@ serve(async (req) => {
         const args = text.split(' ');
         const period = args[1] || '1h'; // 默认1小时
         
-        // 定义支持的时间周期及其对应的数据点索引
-        const periodMap: { [key: string]: { index: number; label: string; needsBinance: boolean } } = {
-          '5m': { index: 3, label: '5分钟', needsBinance: false },
-          '15m': { index: 9, label: '15分钟', needsBinance: false },
-          '30m': { index: 18, label: '30分钟', needsBinance: false },
-          '1h': { index: 30, label: '1小时', needsBinance: false },
-          '4h': { index: 120, label: '4小时', needsBinance: false },
-          '24h': { index: 0, label: '24小时', needsBinance: true }, // 使用Binance数据
+        // 定义支持的时间周期及其对应的分钟数
+        const periodMap: { [key: string]: { minutes: number; label: string; needsBinance: boolean } } = {
+          '5m': { minutes: 5, label: '5分钟', needsBinance: false },
+          '15m': { minutes: 15, label: '15分钟', needsBinance: false },
+          '30m': { minutes: 30, label: '30分钟', needsBinance: false },
+          '1h': { minutes: 60, label: '1小时', needsBinance: false },
+          '4h': { minutes: 240, label: '4小时', needsBinance: false },
+          '24h': { minutes: 1440, label: '24小时', needsBinance: true }, // 使用Binance数据
         };
 
         if (!periodMap[period]) {
@@ -273,7 +314,7 @@ serve(async (req) => {
           });
         }
 
-        const { index, label, needsBinance } = periodMap[period];
+        const { minutes, label, needsBinance } = periodMap[period];
 
         // 获取所有启用的币对
         const { data: coins } = await supabase
@@ -314,36 +355,40 @@ serve(async (req) => {
           // 获取CVD历史数据
           const { data: cvdData } = await supabase
             .from('cvd_data')
-            .select('cvd, price, open_interest, timestamp')
+            .select('cvd, price, open_interest, open_interest_value, timestamp')
             .eq('symbol', symbol)
             .order('timestamp', { ascending: false })
-            .limit(2880);
+            .limit(600);
 
-          if (!cvdData || cvdData.length < index + 5) {
+          if (!cvdData || cvdData.length < 2) {
             return null; // 数据不足
           }
 
-          // 计算变化率
-          const snapshots = cvdData as CvdSnapshot[];
-          const now = snapshots[0];
-          const prev = snapshots[index] || snapshots[index - 1];
+          const snapshots = (cvdData as CvdSnapshot[])
+            .map(normalizeSnapshot)
+            .filter((snap) => Number.isFinite(snap.timestamp) && Number.isFinite(snap.cvd) && Number.isFinite(snap.price))
+            .sort((a, b) => b.timestamp - a.timestamp);
 
-          const calc = (curr: CvdSnapshot | undefined, previous: CvdSnapshot | undefined, field: keyof CvdSnapshot) => {
-            if (!curr || !previous) return 0;
-            const currentValue = toNumeric(curr[field]);
-            const previousValue = toNumeric(previous[field]);
-            if (!Number.isFinite(currentValue) || !Number.isFinite(previousValue) || previousValue === 0) {
-              return 0;
-            }
-            return ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
-          };
+          if (snapshots.length < 2) {
+            return null;
+          }
+
+          const latest = snapshots[0];
+          const reference = findSnapshotAtOffset(snapshots, minutes);
+          if (!reference) {
+            return null;
+          }
+
+          const oiChange = latest.openInterest !== null && reference.openInterest !== null
+            ? safePercentChange(latest.openInterest, reference.openInterest)
+            : 0;
 
           return {
             symbol: coin.name,
-            oi: calc(now, prev, 'open_interest'),
-            cvd: calc(now, prev, 'cvd'),
-            price: calc(now, prev, 'price'),
-            volume: 0, // CVD数据没有交易量
+            oi: oiChange,
+            cvd: safePercentChange(latest.cvd, reference.cvd),
+            price: safePercentChange(latest.price, reference.price),
+            volume: 0,
           } satisfies CoinStats;
         });
 
@@ -411,12 +456,12 @@ serve(async (req) => {
         // 获取历史CVD数据
         const { data: cvdData } = await supabase
           .from('cvd_data')
-          .select('cvd, price, open_interest, timestamp')
+          .select('cvd, price, open_interest, open_interest_value, timestamp')
           .eq('symbol', symbol)
           .order('timestamp', { ascending: false })
-          .limit(2880);
+          .limit(600);
 
-        if (!cvdData || cvdData.length < 30) {
+        if (!cvdData || cvdData.length < 2) {
           await sendTelegramMessage(botToken, chatId, `❌ ${coinData.name} 数据不足`);
           return new Response(JSON.stringify({ ok: true }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -430,57 +475,51 @@ serve(async (req) => {
         const binance24h = binanceRes.ok ? await binanceRes.json() : null;
 
         // 定义时间维度
+        const snapshots = (cvdData as CvdSnapshot[])
+          .map(normalizeSnapshot)
+          .filter((snap) => Number.isFinite(snap.timestamp) && Number.isFinite(snap.cvd) && Number.isFinite(snap.price))
+          .sort((a, b) => b.timestamp - a.timestamp);
+
+        if (snapshots.length < 2) {
+          await sendTelegramMessage(botToken, chatId, `❌ ${coinData.name} 数据不足`);
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
         const periods = [
-          { label: '5m', index: 3 },
-          { label: '15m', index: 9 },
-          { label: '30m', index: 18 },
-          { label: '1h', index: 30 },
-          { label: '4h', index: 120 },
-          { label: '8h', index: 240 },
-          { label: '12h', index: 360 },
+          { label: '5m', minutes: 5 },
+          { label: '15m', minutes: 15 },
+          { label: '30m', minutes: 30 },
+          { label: '1h', minutes: 60 },
+          { label: '4h', minutes: 240 },
+          { label: '8h', minutes: 480 },
+          { label: '12h', minutes: 720 },
         ];
 
-        const now = cvdData[0];
+        const latest = snapshots[0];
         const results = [];
 
         // 计算各时间维度数据
         for (const period of periods) {
-          if (cvdData.length < period.index) continue;
-          
-          // 获取区间内的数据点
-          const rangeData = cvdData.slice(0, period.index + 1);
-          const prev = cvdData[period.index];
-          
-          // OI变化：区间首尾对比
-          const oiChange = prev.open_interest !== '0' 
-            ? ((parseFloat(now.open_interest) - parseFloat(prev.open_interest)) / Math.abs(parseFloat(prev.open_interest))) * 100
-            : 0;
-          
-          // CVD累计变化：区间内的总增量
-          let cvdTotal = 0;
-          for (let i = 0; i < rangeData.length - 1; i++) {
-            const curr = parseFloat(rangeData[i].cvd);
-            const next = parseFloat(rangeData[i + 1].cvd);
-            cvdTotal += (curr - next); // 累计增量
-          }
-          
-          // CVD变化率：相对于起始值
-          const cvdChange = prev.cvd !== '0'
-            ? (cvdTotal / Math.abs(parseFloat(prev.cvd))) * 100
+          const reference = findSnapshotAtOffset(snapshots, period.minutes);
+          if (!reference) continue;
+
+          const oiChange = latest.openInterest !== null && reference.openInterest !== null
+            ? safePercentChange(latest.openInterest, reference.openInterest)
             : 0;
 
-          // 价格变化：区间首尾对比
-          const priceChange = prev.price !== '0'
-            ? ((parseFloat(now.price) - parseFloat(prev.price)) / parseFloat(prev.price)) * 100
-            : 0;
+          const cvdDelta = latest.cvd - reference.cvd;
+          const cvdChange = safePercentChange(latest.cvd, reference.cvd);
+          const priceChange = safePercentChange(latest.price, reference.price);
 
           results.push({
             period: period.label,
-            oi: parseFloat(now.open_interest),
+            oi: latest.openInterest,
             oiChange,
-            cvd: cvdTotal, // 显示累计值
+            cvd: cvdDelta,
             cvdChange,
-            price: parseFloat(now.price),
+            price: latest.price,
             priceChange,
           });
         }
@@ -505,9 +544,10 @@ serve(async (req) => {
         };
 
         const formatValue = (v: number) => {
-          if (v >= 1000000) return `${(v / 1000000).toFixed(2)}m`;
-          if (v >= 1000) return `${(v / 1000).toFixed(2)}k`;
-          return v.toFixed(2);
+          const abs = Math.abs(v);
+          if (abs >= 1000000) return `${(abs / 1000000).toFixed(2)}m`;
+          if (abs >= 1000) return `${(abs / 1000).toFixed(2)}k`;
+          return abs.toFixed(2);
         };
 
         let message = `🪙 ${coinData.name}\n\n`;
@@ -515,13 +555,15 @@ serve(async (req) => {
         // OI变化
         message += `📊 合约OI变化\n`;
         results.forEach(r => {
-          const val = r.oi > 0 ? formatValue(r.oi) : '--';
-          message += `${r.period.padEnd(5)} ${val.padEnd(10)} ${formatNum(r.oiChange)}\n`;
+          const oiDisplay = typeof r.oi === 'number' && r.oi !== null
+            ? formatValue(r.oi)
+            : '--';
+          message += `${r.period.padEnd(5)} ${oiDisplay.padEnd(10)} ${formatNum(r.oiChange)}\n`;
         });
 
         message += `\n💰 资金流入CVD\n`;
         results.forEach(r => {
-          const val = formatValue(Math.abs(r.cvd));
+          const val = formatValue(r.cvd);
           const prefix = r.cvd >= 0 ? '+' : '-';
           message += `${r.period.padEnd(5)} ${prefix}${val.padEnd(9)} ${formatNum(r.cvdChange)}\n`;
         });
