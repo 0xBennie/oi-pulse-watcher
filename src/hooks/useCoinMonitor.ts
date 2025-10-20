@@ -100,187 +100,190 @@ export function useCoinMonitor(refreshInterval: number = 60000) { // 1分钟刷�
 
     setCoins(coinsData);
 
-    const results = await Promise.all(
-      coinsData.map(async (coin) => {
-        // CVD数据由后台定时任务自动收集，这里只读取即可
-        const [priceData, oiHistory, cvdHistory] = await Promise.all([
-          fetchPriceData(coin.binance),
-          fetchOIHistory(coin.binance, 4), // 获取4个数据点用于洗盘检测
-          getCVDHistory(coin.binance, FETCH_LIMIT), // 获取3天历史数据（72小时）
-        ]);
+    const processCoinData = async (coin: Coin): Promise<MonitorDataWithHistory | null> => {
+      const [priceData, oiHistory, cvdHistory] = await Promise.all([
+        fetchPriceData(coin.binance),
+        fetchOIHistory(coin.binance, 4),
+        getCVDHistory(coin.binance, FETCH_LIMIT),
+      ]);
 
-        console.log(`${coin.base} CVD历史数据:`, cvdHistory.length, '个点');
+      console.log(`${coin.base} CVD历史数据:`, cvdHistory.length, '个点');
 
-        if (!priceData || oiHistory.length === 0) {
-          return null;
-        }
+      if (!priceData || oiHistory.length === 0) {
+        return null;
+      }
 
-        const sortedOIHistory = [...oiHistory].sort((a, b) => b.timestamp - a.timestamp);
+      const sortedOIHistory = [...oiHistory].sort((a, b) => b.timestamp - a.timestamp);
 
-        // Calculate 5m price change - 使用函数式更新避免依赖
-        const currentPrice = priceData.price;
-        const now = Date.now();
-        const historyKey = coin.binance;
-        const existingPriceHistory = priceHistoryRef.current[historyKey] ?? [];
-        const trimmedPriceHistory = existingPriceHistory.filter(
-          (entry) => now - entry.timestamp <= 10 * 60 * 1000
-        );
+      const currentPrice = priceData.price;
+      const now = Date.now();
+      const historyKey = coin.binance;
+      const existingPriceHistory = priceHistoryRef.current[historyKey] ?? [];
+      const trimmedPriceHistory = existingPriceHistory.filter(
+        (entry) => now - entry.timestamp <= 10 * 60 * 1000
+      );
 
-        const fiveMinutesAgo = now - 5 * 60 * 1000;
-        let referencePriceEntry = [...trimmedPriceHistory]
+      const fiveMinutesAgo = now - 5 * 60 * 1000;
+      let referencePriceEntry = [...trimmedPriceHistory]
+        .reverse()
+        .find((entry) => entry.timestamp <= fiveMinutesAgo);
+
+      if (!referencePriceEntry && trimmedPriceHistory.length > 0) {
+        referencePriceEntry = trimmedPriceHistory[0];
+      }
+
+      const priceChangePercent5m = referencePriceEntry
+        ? calculatePercentageChange(currentPrice, referencePriceEntry.price)
+        : 0;
+
+      priceHistoryRef.current[historyKey] = [
+        ...trimmedPriceHistory,
+        { price: currentPrice, timestamp: now },
+      ];
+
+      const currentOI = sortedOIHistory[0];
+      const currentOITimestamp = currentOI.timestamp;
+      const targetOITimestamp = currentOITimestamp - 5 * 60 * 1000;
+
+      const previousOI = sortedOIHistory
+        .slice(1)
+        .find((item) => item.timestamp <= targetOITimestamp)
+        || sortedOIHistory[sortedOIHistory.length - 1];
+
+      const oiChangePercent = previousOI
+        ? calculatePercentageChange(
+            currentOI.sumOpenInterestValue,
+            previousOI.sumOpenInterestValue
+          )
+        : 0;
+
+      const latestCVDPoint = cvdHistory.length > 0 ? cvdHistory[cvdHistory.length - 1] : undefined;
+      const currentCVD = latestCVDPoint?.cvd ?? 0;
+
+      let cvdChangePercent = 0;
+      if (latestCVDPoint) {
+        const cvdTargetTimestamp = latestCVDPoint.timestamp - 5 * 60 * 1000;
+        const previousCVDPoint = [...cvdHistory]
           .reverse()
-          .find((entry) => entry.timestamp <= fiveMinutesAgo);
+          .find((point) => point.timestamp <= cvdTargetTimestamp && point.timestamp !== latestCVDPoint.timestamp)
+          || cvdHistory[0];
 
-        if (!referencePriceEntry && trimmedPriceHistory.length > 0) {
-          referencePriceEntry = trimmedPriceHistory[0];
+        if (previousCVDPoint) {
+          const previousCVD = previousCVDPoint.cvd;
+          cvdChangePercent = Math.abs(previousCVD) > 0
+            ? ((currentCVD - previousCVD) / Math.abs(previousCVD)) * 100
+            : 0;
+        }
+      }
+
+      const whaleSignal = detectWhaleSignal(
+        sortedOIHistory,
+        priceChangePercent5m,
+        priceData.quoteVolume || 0
+      );
+
+      let tempHistory: HistoricalDataPoint[];
+
+      if (cvdHistory.length > 0) {
+        const existingHistory = historicalDataRef.current[coin.binance] || [];
+        const historyMap = new Map<number, HistoricalDataPoint>();
+
+        for (const point of existingHistory) {
+          historyMap.set(point.timestamp, point);
         }
 
-        const priceChangePercent5m = referencePriceEntry
-          ? calculatePercentageChange(currentPrice, referencePriceEntry.price)
-          : 0;
+        const fallbackOpenInterest = existingHistory.length > 0
+          ? existingHistory[existingHistory.length - 1].openInterest
+          : currentOI.sumOpenInterestValue;
 
-        priceHistoryRef.current[historyKey] = [
-          ...trimmedPriceHistory,
-          { price: currentPrice, timestamp: now },
-        ];
-
-        // Calculate OI change (注意：sortedOIHistory是倒序的，最新的在前)
-        const currentOI = sortedOIHistory[0]; // 最新数据
-        const currentOITimestamp = currentOI.timestamp;
-        const targetOITimestamp = currentOITimestamp - 5 * 60 * 1000;
-
-        const previousOI = sortedOIHistory
-          .slice(1)
-          .find((item) => item.timestamp <= targetOITimestamp)
-          || sortedOIHistory[sortedOIHistory.length - 1];
-
-        const oiChangePercent = previousOI
-          ? calculatePercentageChange(
-              currentOI.sumOpenInterestValue,
-              previousOI.sumOpenInterestValue
-            )
-          : 0;
-
-        // 计算CVD变化 - cvdHistory是按时间升序排列的
-        const latestCVDPoint = cvdHistory.length > 0 ? cvdHistory[cvdHistory.length - 1] : undefined;
-        const currentCVD = latestCVDPoint?.cvd ?? 0;
-
-        let cvdChangePercent = 0;
-        if (latestCVDPoint) {
-          const cvdTargetTimestamp = latestCVDPoint.timestamp - 5 * 60 * 1000;
-          const previousCVDPoint = [...cvdHistory]
-            .reverse()
-            .find((point) => point.timestamp <= cvdTargetTimestamp && point.timestamp !== latestCVDPoint.timestamp)
-            || cvdHistory[0];
-
-          if (previousCVDPoint) {
-            const previousCVD = previousCVDPoint.cvd;
-            cvdChangePercent = Math.abs(previousCVD) > 0
-              ? ((currentCVD - previousCVD) / Math.abs(previousCVD)) * 100
-              : 0;
-          }
+        for (const point of cvdHistory) {
+          const existingPoint = historyMap.get(point.timestamp);
+          historyMap.set(point.timestamp, {
+            timestamp: point.timestamp,
+            price: point.price,
+            cvd: point.cvd,
+            openInterest: point.openInterest ?? existingPoint?.openInterest ?? fallbackOpenInterest,
+          });
         }
 
-        // 检测庄家信号
-        const whaleSignal = detectWhaleSignal(
-          sortedOIHistory,
-          priceChangePercent5m,
-          priceData.quoteVolume || 0
-        );
-
-        // 需要先构建历史数据再判断告警
-        let tempHistory: HistoricalDataPoint[];
-        
-        if (cvdHistory.length > 0) {
-          const existingHistory = historicalDataRef.current[coin.binance] || [];
-          const historyMap = new Map<number, HistoricalDataPoint>();
-
-          for (const point of existingHistory) {
-            historyMap.set(point.timestamp, point);
-          }
-
-          const fallbackOpenInterest = existingHistory.length > 0
-            ? existingHistory[existingHistory.length - 1].openInterest
-            : currentOI.sumOpenInterestValue;
-
-          for (const point of cvdHistory) {
-            const existingPoint = historyMap.get(point.timestamp);
-            historyMap.set(point.timestamp, {
-              timestamp: point.timestamp,
-              price: point.price,
-              cvd: point.cvd,
-              openInterest: point.openInterest ?? existingPoint?.openInterest ?? fallbackOpenInterest,
-            });
-          }
-
-          const newDataPoint: HistoricalDataPoint = {
-            timestamp: now,
-            price: currentPrice,
-            openInterest: currentOI.sumOpenInterestValue,
-            cvd: currentCVD,
-          };
-
-          historyMap.set(newDataPoint.timestamp, newDataPoint);
-          tempHistory = Array.from(historyMap.values()).sort((a, b) => a.timestamp - b.timestamp);
-        } else {
-          const existingHistory = historicalDataRef.current[coin.binance] || [];
-          tempHistory = existingHistory;
-        }
-
-        const alertLevel = determineAlertLevel(
-          cvdChangePercent, 
-          priceChangePercent5m, 
-          oiChangePercent,
-          tempHistory
-        );
-
-        // Update historical data - 合并CVD历史数据
-        const timestamp = now;
-        
-        // 创建当前数据点
         const newDataPoint: HistoricalDataPoint = {
-          timestamp,
+          timestamp: now,
           price: currentPrice,
           openInterest: currentOI.sumOpenInterestValue,
           cvd: currentCVD,
         };
-        
-        let updatedHistory: HistoricalDataPoint[];
-        
-        if (cvdHistory.length > 0) {
-          updatedHistory = tempHistory;
-        } else {
-          const existingHistory = historicalDataRef.current[coin.binance] || [];
-          updatedHistory = [...existingHistory, newDataPoint];
-        }
-        
-        // 限制历史点数量
-        if (updatedHistory.length > MAX_HISTORY_POINTS) {
-          updatedHistory = updatedHistory.slice(-MAX_HISTORY_POINTS);
-        }
 
-        historicalDataRef.current[coin.binance] = updatedHistory;
+        historyMap.set(newDataPoint.timestamp, newDataPoint);
+        tempHistory = Array.from(historyMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+      } else {
+        const existingHistory = historicalDataRef.current[coin.binance] || [];
+        tempHistory = existingHistory;
+      }
 
-        return {
-          coin,
-          price: priceData.price,
-          priceChangePercent24h: priceData.priceChangePercent24h,
-          priceChangePercent5m,
-          openInterest: currentOI.sumOpenInterestValue,
-          openInterestChangePercent5m: oiChangePercent,
-          cvd: currentCVD,
-          cvdChangePercent5m: cvdChangePercent,
-          volume24h: priceData.quoteVolume || 0,
-          whaleSignal,
-          alertLevel,
-          lastUpdate: timestamp,
-          history: updatedHistory,
-        };
-      })
-    );
+      const alertLevel = determineAlertLevel(
+        cvdChangePercent,
+        priceChangePercent5m,
+        oiChangePercent,
+        tempHistory
+      );
 
-    const validResults = results.filter((r): r is MonitorDataWithHistory => r !== null);
-    setMonitorData(validResults);
+      const timestamp = now;
+
+      const newDataPoint: HistoricalDataPoint = {
+        timestamp,
+        price: currentPrice,
+        openInterest: currentOI.sumOpenInterestValue,
+        cvd: currentCVD,
+      };
+
+      let updatedHistory: HistoricalDataPoint[];
+
+      if (cvdHistory.length > 0) {
+        updatedHistory = tempHistory;
+      } else {
+        const existingHistory = historicalDataRef.current[coin.binance] || [];
+        updatedHistory = [...existingHistory, newDataPoint];
+      }
+
+      if (updatedHistory.length > MAX_HISTORY_POINTS) {
+        updatedHistory = updatedHistory.slice(-MAX_HISTORY_POINTS);
+      }
+
+      historicalDataRef.current[coin.binance] = updatedHistory;
+
+      return {
+        coin,
+        price: priceData.price,
+        priceChangePercent24h: priceData.priceChangePercent24h,
+        priceChangePercent5m,
+        openInterest: currentOI.sumOpenInterestValue,
+        openInterestChangePercent5m: oiChangePercent,
+        cvd: currentCVD,
+        cvdChangePercent5m: cvdChangePercent,
+        volume24h: priceData.quoteVolume || 0,
+        whaleSignal,
+        alertLevel,
+        lastUpdate: timestamp,
+        history: updatedHistory,
+      };
+    };
+
+    const aggregatedResults: MonitorDataWithHistory[] = [];
+    const BATCH_SIZE = 6;
+    const BATCH_DELAY_MS = 350;
+
+    for (let i = 0; i < coinsData.length; i += BATCH_SIZE) {
+      const batch = coinsData.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map(processCoinData));
+      const validBatch = batchResults.filter((r): r is MonitorDataWithHistory => r !== null);
+      aggregatedResults.push(...validBatch);
+
+      if (i + BATCH_SIZE < coinsData.length) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+      }
+    }
+
+    setMonitorData(aggregatedResults);
     setLastUpdate(new Date());
   }, []); // 移除 priceHistory 依赖，使用函数式更新
 

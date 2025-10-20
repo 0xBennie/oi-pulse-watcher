@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { syncBinancePerpetualMarkets } from "../_shared/binance-perp-sync.ts";
 
 const ALLOWED_ORIGINS = [
   'https://lovable.dev',
@@ -107,6 +108,18 @@ serve(async (req) => {
     const supabase: SupabaseServiceClient = createClient(supabaseUrl, supabaseKey);
 
     console.log('🔄 Starting auto CVD collection...');
+
+    try {
+      const syncSummary = await syncBinancePerpetualMarkets(supabase, fetchWithRetry, {
+        disableMissing: true,
+      });
+
+      console.log(
+        `📥 Synced Binance perpetual markets: total=${syncSummary.totalMarkets}, new=${syncSummary.newMarkets}, reenabled=${syncSummary.reenabledMarkets}, disabled=${syncSummary.disabledMarkets}`
+      );
+    } catch (syncError) {
+      console.error('⚠️ Failed to sync Binance perpetual markets:', syncError);
+    }
 
     // 从数据库获取所有启用的监控币对
     const { data: monitoredCoins, error: coinsError } = await supabase
