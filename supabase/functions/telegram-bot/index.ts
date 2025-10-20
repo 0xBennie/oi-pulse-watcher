@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { syncBinancePerpetualMarkets } from "../_shared/binance-perp-sync.ts";
 
 const ALLOWED_ORIGINS = [
   'https://lovable.dev',
@@ -62,6 +63,39 @@ const toNumeric = (value: number | string | null | undefined): number => {
   }
   return typeof value === 'number' ? value : parseFloat(value);
 };
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retries = 3,
+  baseDelay = 600,
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: options.signal ?? AbortSignal.timeout(12000),
+      });
+      if (res.ok) return res;
+      const status = res.status;
+      if (retries > 0 && (status === 418 || status === 429 || status >= 500)) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        retries--;
+        attempt++;
+        continue;
+      }
+      throw new Error(`Binance API error: ${status}`);
+    } catch (err) {
+      if (retries <= 0) throw err;
+      const delay = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      retries--;
+      attempt++;
+    }
+  }
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -184,15 +218,30 @@ serve(async (req) => {
 
     } else if (text.startsWith('/list')) {
       // 查看监控币对
-      const { data: coins } = await supabase
+      try {
+        const syncSummary = await syncBinancePerpetualMarkets(supabase, fetchWithRetry, {
+          disableMissing: false,
+        });
+        console.log(
+          `Synced Binance perps before listing: total=${syncSummary.totalMarkets}, new=${syncSummary.newMarkets}, reenabled=${syncSummary.reenabledMarkets}, disabled=${syncSummary.disabledMarkets}`,
+        );
+      } catch (syncError) {
+        console.error('Failed to sync Binance perps for /list command:', syncError);
+      }
+
+      const { data: coins, error: listError } = await supabase
         .from('monitored_coins')
         .select('symbol, name')
-        .eq('enabled', true);
+        .eq('enabled', true)
+        .order('symbol');
 
-      if (!coins || coins.length === 0) {
+      if (listError) {
+        console.error('Failed to load monitored coins for /list:', listError);
+        await sendTelegramMessage(botToken, chatId, '❌ 无法加载监控币对列表，请稍后重试');
+      } else if (!coins || coins.length === 0) {
         await sendTelegramMessage(botToken, chatId, '当前没有监控的币对');
       } else {
-        const list = coins.map(c => `${c.name} (${c.symbol})`).join('\n');
+        const list = coins.map((c) => `${c.name} (${c.symbol})`).join('\n');
         await sendTelegramMessage(botToken, chatId, `📊 监控中的币对 (${coins.length}个):\n\n${list}`);
       }
 
