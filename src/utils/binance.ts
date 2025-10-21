@@ -1,4 +1,12 @@
-import { PriceData, OIData } from '@/types/coin';
+import { PriceData } from '@/types/coin';
+
+interface BinanceTickerResponse {
+  symbol: string;
+  lastPrice: string;
+  priceChangePercent: string;
+  volume: string;
+  quoteVolume: string;
+}
 
 const BINANCE_API_BASE = 'https://fapi.binance.com';
 
@@ -13,8 +21,8 @@ export async function fetchPriceData(symbol: string): Promise<PriceData | null> 
       return null;
     }
 
-    const data = await response.json();
-    
+    const data: BinanceTickerResponse = await response.json();
+
     return {
       symbol: data.symbol,
       price: parseFloat(data.lastPrice),
@@ -25,31 +33,6 @@ export async function fetchPriceData(symbol: string): Promise<PriceData | null> 
   } catch (error) {
     console.error(`Error fetching price for ${symbol}:`, error);
     return null;
-  }
-}
-
-export async function fetchOIHistory(symbol: string, limit: number = 4): Promise<OIData[]> {
-  try {
-    const response = await fetch(
-      `${BINANCE_API_BASE}/futures/data/openInterestHist?symbol=${symbol}&period=5m&limit=${limit}`
-    );
-    
-    if (!response.ok) {
-      console.error(`Failed to fetch OI for ${symbol}: ${response.status}`);
-      return [];
-    }
-
-    const data = await response.json();
-    
-    return data.map((item: any) => ({
-      symbol: item.symbol,
-      timestamp: item.timestamp,
-      sumOpenInterest: parseFloat(item.sumOpenInterest),
-      sumOpenInterestValue: parseFloat(item.sumOpenInterestValue),
-    }));
-  } catch (error) {
-    console.error(`Error fetching OI for ${symbol}:`, error);
-    return [];
   }
 }
 

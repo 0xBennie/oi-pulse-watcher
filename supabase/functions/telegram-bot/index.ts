@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { syncBinancePerpetualMarkets } from "../_shared/binance-perp-sync.ts";
 
 const ALLOWED_ORIGINS = [
   'https://lovable.dev',
@@ -39,6 +40,102 @@ interface TelegramMessage {
 interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+}
+
+interface CvdSnapshot {
+  cvd: number | string;
+  price: number | string;
+  open_interest: number | string | null;
+  open_interest_value?: number | string | null;
+  timestamp: number | string;
+}
+
+interface CoinStats {
+  symbol: string;
+  oi: number;
+  cvd: number;
+  price: number;
+  volume: number;
+}
+
+const toNumeric = (value: number | string | null | undefined): number => {
+  if (value === null || value === undefined) {
+    return NaN;
+  }
+  return typeof value === 'number' ? value : parseFloat(value);
+};
+
+const toNullableNumeric = (value: number | string | null | undefined): number | null => {
+  const numeric = toNumeric(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+interface NormalizedSnapshot {
+  timestamp: number;
+  cvd: number;
+  price: number;
+  openInterest: number | null;
+}
+
+const normalizeSnapshot = (snapshot: CvdSnapshot): NormalizedSnapshot => ({
+  timestamp: Number(snapshot.timestamp),
+  cvd: toNumeric(snapshot.cvd),
+  price: toNumeric(snapshot.price),
+  openInterest: toNullableNumeric(snapshot.open_interest_value ?? snapshot.open_interest ?? null),
+});
+
+const safePercentChange = (current: number, previous: number): number => {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || Math.abs(previous) < 1e-8) {
+    return 0;
+  }
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
+const findSnapshotAtOffset = (snapshots: NormalizedSnapshot[], minutes: number): NormalizedSnapshot | undefined => {
+  if (snapshots.length < 2) {
+    return undefined;
+  }
+  const latestTimestamp = snapshots[0].timestamp;
+  const targetTimestamp = latestTimestamp - minutes * 60 * 1000;
+  for (let i = 1; i < snapshots.length; i++) {
+    if (snapshots[i].timestamp <= targetTimestamp) {
+      return snapshots[i];
+    }
+  }
+  return undefined;
+};
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retries = 3,
+  baseDelay = 600,
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(url, {
+        ...options,
+        signal: options.signal ?? AbortSignal.timeout(12000),
+      });
+      if (res.ok) return res;
+      const status = res.status;
+      if (retries > 0 && (status === 418 || status === 429 || status >= 500)) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        retries--;
+        attempt++;
+        continue;
+      }
+      throw new Error(`Binance API error: ${status}`);
+    } catch (err) {
+      if (retries <= 0) throw err;
+      const delay = baseDelay * Math.pow(2, attempt) + Math.floor(Math.random() * 200);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      retries--;
+      attempt++;
+    }
+  }
 }
 
 function escapeHtml(text: string): string {
@@ -162,15 +259,30 @@ serve(async (req) => {
 
     } else if (text.startsWith('/list')) {
       // 查看监控币对
-      const { data: coins } = await supabase
+      try {
+        const syncSummary = await syncBinancePerpetualMarkets(supabase, fetchWithRetry, {
+          disableMissing: false,
+        });
+        console.log(
+          `Synced Binance perps before listing: total=${syncSummary.totalMarkets}, new=${syncSummary.newMarkets}, reenabled=${syncSummary.reenabledMarkets}, disabled=${syncSummary.disabledMarkets}`,
+        );
+      } catch (syncError) {
+        console.error('Failed to sync Binance perps for /list command:', syncError);
+      }
+
+      const { data: coins, error: listError } = await supabase
         .from('monitored_coins')
         .select('symbol, name')
-        .eq('enabled', true);
+        .eq('enabled', true)
+        .order('symbol');
 
-      if (!coins || coins.length === 0) {
+      if (listError) {
+        console.error('Failed to load monitored coins for /list:', listError);
+        await sendTelegramMessage(botToken, chatId, '❌ 无法加载监控币对列表，请稍后重试');
+      } else if (!coins || coins.length === 0) {
         await sendTelegramMessage(botToken, chatId, '当前没有监控的币对');
       } else {
-        const list = coins.map(c => `${c.name} (${c.symbol})`).join('\n');
+        const list = coins.map((c) => `${c.name} (${c.symbol})`).join('\n');
         await sendTelegramMessage(botToken, chatId, `📊 监控中的币对 (${coins.length}个):\n\n${list}`);
       }
 
@@ -181,14 +293,14 @@ serve(async (req) => {
         const args = text.split(' ');
         const period = args[1] || '1h'; // 默认1小时
         
-        // 定义支持的时间周期及其对应的数据点索引
-        const periodMap: { [key: string]: { index: number; label: string; needsBinance: boolean } } = {
-          '5m': { index: 3, label: '5分钟', needsBinance: false },
-          '15m': { index: 9, label: '15分钟', needsBinance: false },
-          '30m': { index: 18, label: '30分钟', needsBinance: false },
-          '1h': { index: 30, label: '1小时', needsBinance: false },
-          '4h': { index: 120, label: '4小时', needsBinance: false },
-          '24h': { index: 0, label: '24小时', needsBinance: true }, // 使用Binance数据
+        // 定义支持的时间周期及其对应的分钟数
+        const periodMap: { [key: string]: { minutes: number; label: string; needsBinance: boolean } } = {
+          '5m': { minutes: 5, label: '5分钟', needsBinance: false },
+          '15m': { minutes: 15, label: '15分钟', needsBinance: false },
+          '30m': { minutes: 30, label: '30分钟', needsBinance: false },
+          '1h': { minutes: 60, label: '1小时', needsBinance: false },
+          '4h': { minutes: 240, label: '4小时', needsBinance: false },
+          '24h': { minutes: 1440, label: '24小时', needsBinance: true }, // 使用Binance数据
         };
 
         if (!periodMap[period]) {
@@ -202,7 +314,7 @@ serve(async (req) => {
           });
         }
 
-        const { index, label, needsBinance } = periodMap[period];
+        const { minutes, label, needsBinance } = periodMap[period];
 
         // 获取所有启用的币对
         const { data: coins } = await supabase
@@ -243,39 +355,47 @@ serve(async (req) => {
           // 获取CVD历史数据
           const { data: cvdData } = await supabase
             .from('cvd_data')
-            .select('cvd, price, open_interest, timestamp')
+            .select('cvd, price, open_interest, open_interest_value, timestamp')
             .eq('symbol', symbol)
             .order('timestamp', { ascending: false })
-            .limit(2880);
+            .limit(600);
 
-          if (!cvdData || cvdData.length < index + 5) {
+          if (!cvdData || cvdData.length < 2) {
             return null; // 数据不足
           }
 
-          // 计算变化率
-          const now = cvdData[0];
-          const prev = cvdData[index] || cvdData[index - 1];
+          const snapshots = (cvdData as CvdSnapshot[])
+            .map(normalizeSnapshot)
+            .filter((snap) => Number.isFinite(snap.timestamp) && Number.isFinite(snap.cvd) && Number.isFinite(snap.price))
+            .sort((a, b) => b.timestamp - a.timestamp);
 
-          const calc = (curr: any, prev: any, field: string) => {
-            if (!prev || !curr) return 0;
-            const c = parseFloat(curr[field]);
-            const p = parseFloat(prev[field]);
-            return p !== 0 ? ((c - p) / Math.abs(p)) * 100 : 0;
-          };
+          if (snapshots.length < 2) {
+            return null;
+          }
+
+          const latest = snapshots[0];
+          const reference = findSnapshotAtOffset(snapshots, minutes);
+          if (!reference) {
+            return null;
+          }
+
+          const oiChange = latest.openInterest !== null && reference.openInterest !== null
+            ? safePercentChange(latest.openInterest, reference.openInterest)
+            : 0;
 
           return {
             symbol: coin.name,
-            oi: calc(now, prev, 'open_interest'),
-            cvd: calc(now, prev, 'cvd'),
-            price: calc(now, prev, 'price'),
-            volume: 0, // CVD数据没有交易量
-          };
+            oi: oiChange,
+            cvd: safePercentChange(latest.cvd, reference.cvd),
+            price: safePercentChange(latest.price, reference.price),
+            volume: 0,
+          } satisfies CoinStats;
         });
 
-        const allStats = (await Promise.all(statsPromises)).filter(s => s !== null);
-        
+        const allStats = (await Promise.all(statsPromises)).filter((s): s is CoinStats => s !== null);
+
         // 按OI变化率排序
-        allStats.sort((a, b) => Math.abs(b!.oi) - Math.abs(a!.oi));
+        allStats.sort((a, b) => Math.abs(b.oi) - Math.abs(a.oi));
 
         // 格式化输出
         const formatNum = (n: number) => {
@@ -336,12 +456,12 @@ serve(async (req) => {
         // 获取历史CVD数据
         const { data: cvdData } = await supabase
           .from('cvd_data')
-          .select('cvd, price, open_interest, timestamp')
+          .select('cvd, price, open_interest, open_interest_value, timestamp')
           .eq('symbol', symbol)
           .order('timestamp', { ascending: false })
-          .limit(2880);
+          .limit(600);
 
-        if (!cvdData || cvdData.length < 30) {
+        if (!cvdData || cvdData.length < 2) {
           await sendTelegramMessage(botToken, chatId, `❌ ${coinData.name} 数据不足`);
           return new Response(JSON.stringify({ ok: true }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -355,57 +475,51 @@ serve(async (req) => {
         const binance24h = binanceRes.ok ? await binanceRes.json() : null;
 
         // 定义时间维度
+        const snapshots = (cvdData as CvdSnapshot[])
+          .map(normalizeSnapshot)
+          .filter((snap) => Number.isFinite(snap.timestamp) && Number.isFinite(snap.cvd) && Number.isFinite(snap.price))
+          .sort((a, b) => b.timestamp - a.timestamp);
+
+        if (snapshots.length < 2) {
+          await sendTelegramMessage(botToken, chatId, `❌ ${coinData.name} 数据不足`);
+          return new Response(JSON.stringify({ ok: true }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          });
+        }
+
         const periods = [
-          { label: '5m', index: 3 },
-          { label: '15m', index: 9 },
-          { label: '30m', index: 18 },
-          { label: '1h', index: 30 },
-          { label: '4h', index: 120 },
-          { label: '8h', index: 240 },
-          { label: '12h', index: 360 },
+          { label: '5m', minutes: 5 },
+          { label: '15m', minutes: 15 },
+          { label: '30m', minutes: 30 },
+          { label: '1h', minutes: 60 },
+          { label: '4h', minutes: 240 },
+          { label: '8h', minutes: 480 },
+          { label: '12h', minutes: 720 },
         ];
 
-        const now = cvdData[0];
+        const latest = snapshots[0];
         const results = [];
 
         // 计算各时间维度数据
         for (const period of periods) {
-          if (cvdData.length < period.index) continue;
-          
-          // 获取区间内的数据点
-          const rangeData = cvdData.slice(0, period.index + 1);
-          const prev = cvdData[period.index];
-          
-          // OI变化：区间首尾对比
-          const oiChange = prev.open_interest !== '0' 
-            ? ((parseFloat(now.open_interest) - parseFloat(prev.open_interest)) / Math.abs(parseFloat(prev.open_interest))) * 100
-            : 0;
-          
-          // CVD累计变化：区间内的总增量
-          let cvdTotal = 0;
-          for (let i = 0; i < rangeData.length - 1; i++) {
-            const curr = parseFloat(rangeData[i].cvd);
-            const next = parseFloat(rangeData[i + 1].cvd);
-            cvdTotal += (curr - next); // 累计增量
-          }
-          
-          // CVD变化率：相对于起始值
-          const cvdChange = prev.cvd !== '0'
-            ? (cvdTotal / Math.abs(parseFloat(prev.cvd))) * 100
+          const reference = findSnapshotAtOffset(snapshots, period.minutes);
+          if (!reference) continue;
+
+          const oiChange = latest.openInterest !== null && reference.openInterest !== null
+            ? safePercentChange(latest.openInterest, reference.openInterest)
             : 0;
 
-          // 价格变化：区间首尾对比
-          const priceChange = prev.price !== '0'
-            ? ((parseFloat(now.price) - parseFloat(prev.price)) / parseFloat(prev.price)) * 100
-            : 0;
+          const cvdDelta = latest.cvd - reference.cvd;
+          const cvdChange = safePercentChange(latest.cvd, reference.cvd);
+          const priceChange = safePercentChange(latest.price, reference.price);
 
           results.push({
             period: period.label,
-            oi: parseFloat(now.open_interest),
+            oi: latest.openInterest,
             oiChange,
-            cvd: cvdTotal, // 显示累计值
+            cvd: cvdDelta,
             cvdChange,
-            price: parseFloat(now.price),
+            price: latest.price,
             priceChange,
           });
         }
@@ -430,9 +544,10 @@ serve(async (req) => {
         };
 
         const formatValue = (v: number) => {
-          if (v >= 1000000) return `${(v / 1000000).toFixed(2)}m`;
-          if (v >= 1000) return `${(v / 1000).toFixed(2)}k`;
-          return v.toFixed(2);
+          const abs = Math.abs(v);
+          if (abs >= 1000000) return `${(abs / 1000000).toFixed(2)}m`;
+          if (abs >= 1000) return `${(abs / 1000).toFixed(2)}k`;
+          return abs.toFixed(2);
         };
 
         let message = `🪙 ${coinData.name}\n\n`;
@@ -440,13 +555,15 @@ serve(async (req) => {
         // OI变化
         message += `📊 合约OI变化\n`;
         results.forEach(r => {
-          const val = r.oi > 0 ? formatValue(r.oi) : '--';
-          message += `${r.period.padEnd(5)} ${val.padEnd(10)} ${formatNum(r.oiChange)}\n`;
+          const oiDisplay = typeof r.oi === 'number' && r.oi !== null
+            ? formatValue(r.oi)
+            : '--';
+          message += `${r.period.padEnd(5)} ${oiDisplay.padEnd(10)} ${formatNum(r.oiChange)}\n`;
         });
 
         message += `\n💰 资金流入CVD\n`;
         results.forEach(r => {
-          const val = formatValue(Math.abs(r.cvd));
+          const val = formatValue(r.cvd);
           const prefix = r.cvd >= 0 ? '+' : '-';
           message += `${r.period.padEnd(5)} ${prefix}${val.padEnd(9)} ${formatNum(r.cvdChange)}\n`;
         });

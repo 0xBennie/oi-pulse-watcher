@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { Trash2, Plus, Power, PowerOff, Eraser } from 'lucide-react';
+import { Trash2, Plus, Power, PowerOff, Eraser, RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cleanupInvalidCoins } from '@/utils/cleanupInvalidCoins';
 
@@ -30,7 +30,7 @@ export function CoinManagement() {
     const { data, error } = await supabase
       .from('monitored_coins')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('symbol', { ascending: true });
 
     if (error) {
       toast.error('获取币对列表失败');
@@ -202,6 +202,36 @@ export function CoinManagement() {
     toast.success(`回填完成！成功: ${successCount}, 失败: ${failCount}`);
   };
 
+  const syncBinancePerps = async () => {
+    setLoading(true);
+    const toastId = toast.loading('正在同步币安永续合约列表...');
+
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-monitored-coins', {
+        body: {
+          action: 'sync_binance_perps',
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      toast.success(data?.message ?? '已同步币安永续合约列表', { id: toastId });
+      await fetchCoins();
+    } catch (err) {
+      console.error('Sync Binance perps failed:', err);
+      const message = err instanceof Error ? err.message : '未知错误';
+      toast.error(`同步失败: ${message}`, { id: toastId });
+    }
+
+    setLoading(false);
+  };
+
   const handleCleanupInvalid = async () => {
     if (!confirm('确定要清理所有无效币对吗？（在币安合约市场不存在的币对将被删除）')) {
       return;
@@ -227,8 +257,18 @@ export function CoinManagement() {
             </CardDescription>
           </div>
           <div className="flex gap-2">
-            <Button 
-              onClick={backfillAllCoins} 
+            <Button
+              onClick={syncBinancePerps}
+              disabled={loading}
+              variant="secondary"
+              size="sm"
+              className="flex items-center gap-1"
+            >
+              <RefreshCcw className="w-4 h-4" />
+              同步币安永续合约
+            </Button>
+            <Button
+              onClick={backfillAllCoins}
               disabled={loading || coins.length === 0}
               variant="default"
               size="sm"
@@ -343,6 +383,7 @@ export function CoinManagement() {
             <li>定时任务每1分钟自动执行一次，持续积累数据</li>
             <li>可以随时暂停/启用单个币对的监控</li>
             <li>点击"清理无效币对"可自动删除在币安已下线的合约</li>
+            <li>点击"同步币安永续合约"按钮可以一键导入所有 USDT 永续合约并保持列表最新</li>
             <li>删除币对不会删除历史CVD数据</li>
           </ul>
         </div>

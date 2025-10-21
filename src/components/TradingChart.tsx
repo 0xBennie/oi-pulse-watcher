@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { HistoricalDataPoint } from '@/types/coin';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, type TooltipProps } from 'recharts';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
@@ -97,26 +97,33 @@ export function TradingChart({ data, symbol }: TradingChartProps) {
     Math.ceil(maxCVD + cvdPadding)
   ];
 
-  const CustomTooltip = ({ active, payload }: any) => {
+  const CustomTooltip = ({ active, payload }: TooltipProps<number, string>) => {
     if (active && payload && payload.length) {
+      const priceValue = typeof payload[0].value === 'number'
+        ? payload[0].value
+        : Number(payload[0].value ?? 0);
+      const cvdEntry = payload[1];
+      const cvdValue = cvdEntry?.value;
+      const numericCvdValue = typeof cvdValue === 'number' ? cvdValue : Number(cvdValue ?? 0);
+
       return (
         <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg p-3 shadow-xl">
           <p className="text-xs text-muted-foreground mb-2">{payload[0].payload.time}</p>
           <div className="space-y-1">
             <p className="text-sm font-semibold text-primary flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-primary"></span>
-              价格: <span className="font-mono">${payload[0].value.toFixed(4)}</span>
+              价格: <span className="font-mono">${priceValue.toFixed(4)}</span>
             </p>
-            {payload[1] && (
+            {cvdEntry && (
               <p className={cn(
                 "text-sm font-semibold flex items-center gap-2",
-                payload[1].value >= 0 ? "text-green-500" : "text-red-500"
+                numericCvdValue >= 0 ? "text-green-500" : "text-red-500"
               )}>
                 <span className={cn(
                   "w-3 h-3 rounded-full",
-                  payload[1].value >= 0 ? "bg-green-500" : "bg-red-500"
+                  numericCvdValue >= 0 ? "bg-green-500" : "bg-red-500"
                 )}></span>
-                CVD: <span className="font-mono">{payload[1].value >= 0 ? '+' : ''}{payload[1].value.toFixed(1)}K</span>
+                CVD: <span className="font-mono">{numericCvdValue >= 0 ? '+' : ''}{numericCvdValue.toFixed(1)}K</span>
               </p>
             )}
           </div>

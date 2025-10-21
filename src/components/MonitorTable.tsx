@@ -1,5 +1,14 @@
 import { useState, useMemo } from 'react';
-import { MonitorData, SortField, SortDirection } from '@/types/coin';
+import { MonitorData, SortField, SortDirection, AlertLevel } from '@/types/coin';
+
+const ALERT_PRIORITY: Record<AlertLevel, number> = {
+  STRONG_BREAKOUT: 5,
+  ACCUMULATION: 4,
+  DISTRIBUTION_WARN: 3,
+  SHORT_CONFIRM: 2,
+  TOP_DIVERGENCE: 1,
+  NONE: 0
+};
 import { AlertBadge } from './AlertBadge';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -29,8 +38,8 @@ export function MonitorTable({ data, onCoinRemoved }: MonitorTableProps) {
 
   const sortedData = useMemo(() => {
     const sorted = [...data].sort((a, b) => {
-      let aValue: any;
-      let bValue: any;
+      let aValue: number | string = 0;
+      let bValue: number | string = 0;
 
       switch (sortField) {
         case 'symbol':
@@ -57,27 +66,23 @@ export function MonitorTable({ data, onCoinRemoved }: MonitorTableProps) {
           aValue = Math.abs(a.openInterestChangePercent5m);
           bValue = Math.abs(b.openInterestChangePercent5m);
           break;
-        case 'alert':
-          const alertOrder = { 
-            STRONG_BREAKOUT: 5, 
-            ACCUMULATION: 4, 
-            DISTRIBUTION_WARN: 3, 
-            SHORT_CONFIRM: 2, 
-            TOP_DIVERGENCE: 1, 
-            NONE: 0 
-          };
-          aValue = alertOrder[a.alertLevel];
-          bValue = alertOrder[b.alertLevel];
+        case 'alert': {
+          aValue = ALERT_PRIORITY[a.alertLevel];
+          bValue = ALERT_PRIORITY[b.alertLevel];
           break;
+        }
       }
 
-      if (typeof aValue === 'string') {
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
         return sortDirection === 'asc'
           ? aValue.localeCompare(bValue)
           : bValue.localeCompare(aValue);
       }
 
-      return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+      const numericA = typeof aValue === 'number' ? aValue : Number(aValue);
+      const numericB = typeof bValue === 'number' ? bValue : Number(bValue);
+
+      return sortDirection === 'asc' ? numericA - numericB : numericB - numericA;
     });
 
     return sorted;

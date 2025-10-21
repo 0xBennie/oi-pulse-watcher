@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { syncBinancePerpetualMarkets } from "../_shared/binance-perp-sync.ts";
 
 const ALLOWED_ORIGINS = [
   'https://lovable.dev',
@@ -168,13 +169,36 @@ serve(async (req) => {
         }
 
         return new Response(
-          JSON.stringify({ 
-            success: true, 
+          JSON.stringify({
+            success: true,
             cleaned: invalidCoinIds.length,
-            message: `已清理 ${invalidCoinIds.length} 个无效币对` 
+            message: `已清理 ${invalidCoinIds.length} 个无效币对`
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+      }
+
+      case 'sync_binance_perps': {
+        console.log('Syncing Binance perpetual futures markets into monitored_coins...');
+
+        try {
+          const summary = await syncBinancePerpetualMarkets(supabase);
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              summary,
+              message: `已同步 ${summary.totalMarkets} 个永续合约，新增 ${summary.newMarkets} 个，重新启用 ${summary.reenabledMarkets} 个`,
+            }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        } catch (err) {
+          console.error('Sync Binance perpetual markets failed:', err);
+          return new Response(
+            JSON.stringify({ error: '同步币安永续合约失败' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
       }
 
       case 'toggle': {

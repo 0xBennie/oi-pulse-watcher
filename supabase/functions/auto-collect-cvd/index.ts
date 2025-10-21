@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { syncBinancePerpetualMarkets } from "../_shared/binance-perp-sync.ts";
 
 const ALLOWED_ORIGINS = [
   'https://lovable.dev',
@@ -23,13 +24,194 @@ function getCorsHeaders(origin: string | null): HeadersInit {
 }
 
 const BINANCE_API_BASE = 'https://fapi.binance.com';
+const SNAP_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_BACKFILL_INTERVALS = 24; // 2 小时的回填窗口
+const MAX_TRADES_PER_REQUEST = 1000;
+const EPSILON = 1e-8;
 
-interface TradeData {
-  id: number;
-  price: string;
-  qty: string;
-  time: number;
-  isBuyerMaker: boolean;
+type GenericSchema = {
+  Tables: Record<string, unknown>;
+  Views: Record<string, unknown>;
+  Functions: Record<string, unknown>;
+  Enums: Record<string, unknown>;
+  CompositeTypes: Record<string, unknown>;
+};
+
+type GenericDatabase = Record<string, GenericSchema>;
+
+type SupabaseServiceClient = SupabaseClient<GenericDatabase>;
+
+interface AggTradeData {
+  T: number;
+  q: string;
+  m: boolean;
+}
+
+interface OpenInterestSample {
+  timestamp: number;
+  sumOpenInterest: string;
+  sumOpenInterestValue: string;
+}
+
+interface CvdDataRow {
+  cvd: number | string;
+  price: number | string;
+  timestamp: number | string;
+  open_interest?: number | string | null;
+  open_interest_value?: number | string | null;
+}
+
+const toNumber = (value: number | string | null | undefined): number => {
+  if (value === null || value === undefined) {
+    return NaN;
+  }
+  return typeof value === 'number' ? value : parseFloat(value);
+};
+
+const alignToInterval = (timestamp: number): number =>
+  Math.floor(timestamp / SNAP_INTERVAL_MS) * SNAP_INTERVAL_MS;
+
+const generateBuckets = (start: number, end: number): number[] => {
+  const buckets: number[] = [];
+  for (let ts = start; ts <= end; ts += SNAP_INTERVAL_MS) {
+    buckets.push(ts);
+  }
+  return buckets;
+};
+
+const safePercentChange = (current: number, previous: number): number => {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || Math.abs(previous) <= EPSILON) {
+    return 0;
+  }
+  return ((current - previous) / Math.abs(previous)) * 100;
+};
+
+async function fetchMarkPriceSeries(
+  symbol: string,
+  startTime: number,
+  endExclusive: number
+): Promise<Map<number, number>> {
+  const encoded = encodeURIComponent(symbol);
+  const safeStart = Math.max(0, startTime);
+  const safeEnd = Math.max(safeStart + SNAP_INTERVAL_MS, endExclusive);
+  const bucketCount = Math.ceil((safeEnd - safeStart) / SNAP_INTERVAL_MS);
+  const limit = Math.min(1500, bucketCount + 5);
+  const url = `${BINANCE_API_BASE}/fapi/v1/markPriceKlines?symbol=${encoded}&interval=5m&startTime=${safeStart}&endTime=${safeEnd - 1}&limit=${limit}`;
+
+  try {
+    const response = await fetchWithRetry(url);
+    const data = await response.json();
+    const priceMap = new Map<number, number>();
+
+    if (Array.isArray(data)) {
+      for (const entry of data) {
+        const openTime = Number(entry?.[0]);
+        const closePrice = parseFloat(entry?.[4]);
+        if (!Number.isFinite(openTime) || !Number.isFinite(closePrice)) {
+          continue;
+        }
+        priceMap.set(alignToInterval(openTime), closePrice);
+      }
+    }
+
+    return priceMap;
+  } catch (error) {
+    console.warn(`  ⚠️ Failed to fetch mark price klines for ${symbol}:`, error);
+    return new Map();
+  }
+}
+
+async function fetchOpenInterestSeries(
+  symbol: string,
+  startTime: number,
+  endExclusive: number,
+  expectedBuckets: number
+): Promise<Map<number, { contracts: number | null; value: number | null }>> {
+  const encoded = encodeURIComponent(symbol);
+  const limit = Math.min(500, Math.max(expectedBuckets + 10, 20));
+  const url = `${BINANCE_API_BASE}/futures/data/openInterestHist?symbol=${encoded}&period=5m&limit=${limit}`;
+
+  try {
+    const response = await fetchWithRetry(url);
+    const data: OpenInterestSample[] = await response.json();
+    const oiMap = new Map<number, { contracts: number | null; value: number | null }>();
+
+    if (Array.isArray(data)) {
+      for (const item of data) {
+        const rawTimestamp = Number(item.timestamp);
+        if (!Number.isFinite(rawTimestamp)) continue;
+        const bucketStart = alignToInterval(rawTimestamp);
+        if (bucketStart < startTime || bucketStart >= endExclusive) continue;
+
+        const contracts = parseFloat(item.sumOpenInterest);
+        const value = parseFloat(item.sumOpenInterestValue);
+        oiMap.set(bucketStart, {
+          contracts: Number.isFinite(contracts) ? contracts : null,
+          value: Number.isFinite(value) ? value : null,
+        });
+      }
+    }
+
+    return oiMap;
+  } catch (error) {
+    console.warn(`  ⚠️ Failed to fetch open interest for ${symbol}:`, error);
+    return new Map();
+  }
+}
+
+async function fetchCvdDeltas(
+  symbol: string,
+  startTime: number,
+  endExclusive: number
+): Promise<Map<number, number>> {
+  const encoded = encodeURIComponent(symbol);
+  const deltas = new Map<number, number>();
+  let cursor = startTime;
+
+  while (cursor < endExclusive) {
+    const url = `${BINANCE_API_BASE}/fapi/v1/aggTrades?symbol=${encoded}&startTime=${cursor}&endTime=${endExclusive - 1}&limit=${MAX_TRADES_PER_REQUEST}`;
+
+    let trades: AggTradeData[] = [];
+    try {
+      const response = await fetchWithRetry(url);
+      const payload = await response.json();
+      if (!Array.isArray(payload) || payload.length === 0) {
+        break;
+      }
+      trades = payload as AggTradeData[];
+    } catch (error) {
+      console.warn(`  ⚠️ Failed to fetch agg trades for ${symbol}:`, error);
+      break;
+    }
+
+    let maxTimestamp = cursor;
+    for (const trade of trades) {
+      const tradeTimestamp = Number(trade.T);
+      if (!Number.isFinite(tradeTimestamp) || tradeTimestamp < startTime || tradeTimestamp >= endExclusive) {
+        continue;
+      }
+
+      maxTimestamp = Math.max(maxTimestamp, tradeTimestamp);
+      const quantity = parseFloat(trade.q);
+      if (!Number.isFinite(quantity)) continue;
+
+      const delta = trade.m ? -quantity : quantity;
+      const bucketStart = alignToInterval(tradeTimestamp);
+      deltas.set(bucketStart, (deltas.get(bucketStart) ?? 0) + delta);
+    }
+
+    if (trades.length < MAX_TRADES_PER_REQUEST) {
+      cursor = maxTimestamp + 1;
+    } else {
+      const lastTradeTimestamp = Number(trades[trades.length - 1]?.T ?? maxTimestamp);
+      if (!Number.isFinite(lastTradeTimestamp)) {
+        break;
+      }
+      cursor = Math.max(lastTradeTimestamp + 1, cursor + 1);
+    }
+  }
+
+  return deltas;
 }
 
 // 带重试与指数退避的请求，处理 418/429/5xx 等限流/临时错误
@@ -75,9 +257,21 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase: SupabaseServiceClient = createClient(supabaseUrl, supabaseKey);
 
     console.log('🔄 Starting auto CVD collection...');
+
+    try {
+      const syncSummary = await syncBinancePerpetualMarkets(supabase, fetchWithRetry, {
+        disableMissing: true,
+      });
+
+      console.log(
+        `📥 Synced Binance perpetual markets: total=${syncSummary.totalMarkets}, new=${syncSummary.newMarkets}, reenabled=${syncSummary.reenabledMarkets}, disabled=${syncSummary.disabledMarkets}`
+      );
+    } catch (syncError) {
+      console.error('⚠️ Failed to sync Binance perpetual markets:', syncError);
+    }
 
     // 从数据库获取所有启用的监控币对
     const { data: monitoredCoins, error: coinsError } = await supabase
@@ -170,9 +364,8 @@ serve(async (req) => {
   }
 });
 
-async function processCoin(symbol: string, supabase: any): Promise<void> {
+async function processCoin(symbol: string, supabase: SupabaseServiceClient): Promise<void> {
   try {
-    // Validate symbol format
     const symbolPattern = /^[A-Z0-9]{1,10}USDT$/;
     if (!symbolPattern.test(symbol)) {
       console.error(`  Invalid symbol format: ${symbol}`);
@@ -181,121 +374,120 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
 
     console.log(`  Processing ${symbol}...`);
 
-    // URL encode the symbol for safety
-    const encodedSymbol = encodeURIComponent(symbol);
+    const now = Date.now();
+    const currentBucket = alignToInterval(now);
 
-    // 如果该币对历史点过少，自动触发回填以补齐历史
-    try {
-      const { count } = await supabase
-        .from('cvd_data')
-        .select('*', { head: true, count: 'exact' })
-        .eq('symbol', symbol);
-
-      if (!count || count < 60) { // 少于约1小时的数据
-        const { error: bfErr } = await supabase.functions.invoke('backfill-cvd-history', {
-          body: { symbol, hoursBack: 24 },
-        });
-        if (bfErr) {
-          console.warn(`  Backfill error for ${symbol}:`, bfErr);
-        } else {
-          console.log(`  ⏪ Backfilled ${symbol} for 24h`);
-        }
-      }
-    } catch (e) {
-      console.warn(`  Backfill check failed for ${symbol}:`, e);
-    }
-
-    // 获取最近1000笔交易（带重试，避免418/429限流）
-    const response = await fetchWithRetry(
-      `${BINANCE_API_BASE}/fapi/v1/trades?symbol=${encodedSymbol}&limit=1000`
-    );
-
-    const trades: TradeData[] = await response.json();
-
-    // 计算CVD（滚动窗口，仅反映最近1000笔交易）
-    let cvd = 0;
-    
-    for (const trade of trades) {
-      const volume = parseFloat(trade.qty);
-      const delta = trade.isBuyerMaker ? -volume : volume;
-      cvd += delta;
-    }
-
-    // 获取最新价格和时间戳
-    const latestPrice = parseFloat(trades[trades.length - 1].price);
-    const latestTimestamp = trades[trades.length - 1].time;
-
-    // 不再累积，直接使用当前1000笔交易的CVD
-    const currentCvd = cvd;
-
-    // 获取最新 OI（5m 聚合）并与CVD一起存储
-    let openInterest: number | null = null;
-    let openInterestValue: number | null = null;
-    try {
-      const oiRes = await fetchWithRetry(
-        `${BINANCE_API_BASE}/futures/data/openInterestHist?symbol=${encodedSymbol}&period=5m&limit=1`
-      );
-      const oiArr = await oiRes.json();
-      if (Array.isArray(oiArr) && oiArr.length > 0) {
-        openInterest = parseFloat(oiArr[0].sumOpenInterest);
-        openInterestValue = parseFloat(oiArr[0].sumOpenInterestValue);
-      }
-    } catch (e) {
-      console.warn(`  OI fetch failed for ${symbol}:`, e);
-    }
-
-    // 存储CVD + OI 数据
-    const { error: cvdError } = await supabase
+    const { data: latestRow, error: latestRowError } = await supabase
       .from('cvd_data')
-      .insert({
+      .select('timestamp, cvd, price, open_interest, open_interest_value')
+      .eq('symbol', symbol)
+      .order('timestamp', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (latestRowError) {
+      throw latestRowError;
+    }
+
+    const lastTimestamp = latestRow ? Number(latestRow.timestamp) : null;
+    let startBucket = lastTimestamp !== null && Number.isFinite(lastTimestamp)
+      ? alignToInterval(lastTimestamp) + SNAP_INTERVAL_MS
+      : currentBucket - SNAP_INTERVAL_MS * (DEFAULT_BACKFILL_INTERVALS - 1);
+
+    if (startBucket > currentBucket) {
+      console.log(`  ⏭️ ${symbol}: snapshots already up to date`);
+      return;
+    }
+
+    if (!Number.isFinite(startBucket)) {
+      startBucket = currentBucket;
+    }
+
+    const buckets = generateBuckets(startBucket, currentBucket);
+    if (buckets.length === 0) {
+      console.log(`  ⏭️ ${symbol}: no buckets to process`);
+      return;
+    }
+
+    const rangeStart = buckets[0];
+    const rangeEndExclusive = buckets[buckets.length - 1] + SNAP_INTERVAL_MS;
+
+    const [priceMap, oiMap, cvdDeltas] = await Promise.all([
+      fetchMarkPriceSeries(symbol, rangeStart, rangeEndExclusive),
+      fetchOpenInterestSeries(symbol, rangeStart, rangeEndExclusive, buckets.length),
+      fetchCvdDeltas(symbol, rangeStart, rangeEndExclusive),
+    ]);
+
+    let runningCvd = latestRow ? toNumber(latestRow.cvd) : 0;
+    let lastPrice = latestRow ? toNumber(latestRow.price) : NaN;
+    let lastOiContracts = latestRow ? toNumber(latestRow.open_interest) : NaN;
+    let lastOiValue = latestRow ? toNumber(latestRow.open_interest_value) : NaN;
+
+    const rowsToUpsert: Array<{
+      symbol: string;
+      timestamp: number;
+      price: number;
+      cvd: number;
+      open_interest: number | null;
+      open_interest_value: number | null;
+    }> = [];
+
+    for (const bucketStart of buckets) {
+      const price = priceMap.get(bucketStart) ?? (Number.isFinite(lastPrice) ? lastPrice : undefined);
+      const oiInfo = oiMap.get(bucketStart);
+      const oiContracts = oiInfo?.contracts ?? (Number.isFinite(lastOiContracts) ? lastOiContracts : null);
+      const oiValue = oiInfo?.value ?? (Number.isFinite(lastOiValue) ? lastOiValue : null);
+      const delta = cvdDeltas.get(bucketStart) ?? 0;
+      const nextCvd = runningCvd + delta;
+
+      if (price === undefined || !Number.isFinite(price)) {
+        console.warn(`  ⚠️ ${symbol}: missing price for ${new Date(bucketStart).toISOString()}, skipping snapshot`);
+        runningCvd = nextCvd;
+        continue;
+      }
+
+      rowsToUpsert.push({
         symbol,
-        timestamp: latestTimestamp,
-        cvd: currentCvd,
-        price: latestPrice,
-        open_interest: openInterest,
-        open_interest_value: openInterestValue,
+        timestamp: bucketStart,
+        price,
+        cvd: nextCvd,
+        open_interest: oiContracts !== null && Number.isFinite(oiContracts) ? oiContracts : null,
+        open_interest_value: oiValue !== null && Number.isFinite(oiValue) ? oiValue : null,
       });
 
-    if (cvdError) {
-      throw cvdError;
-    }
-
-    // 计算 OI 变化率（基于最近3个含OI的数据点，约4-6分钟）
-    let oiChangePercent = 0;
-    try {
-      const { data: oiRows } = await supabase
-        .from('cvd_data')
-        .select('open_interest')
-        .eq('symbol', symbol)
-        .not('open_interest', 'is', null)
-        .order('timestamp', { ascending: false })
-        .limit(3);
-
-      if (oiRows && oiRows.length >= 3) {
-        const oiNow = parseFloat(oiRows[0].open_interest as any);
-        const oiPrev = parseFloat(oiRows[2].open_interest as any);
-        if (isFinite(oiNow) && isFinite(oiPrev) && Math.abs(oiPrev) > 0) {
-          oiChangePercent = ((oiNow - oiPrev) / Math.abs(oiPrev)) * 100;
-        }
-      } else {
-        console.log(`  ⏭️ ${symbol}: OI 数据不足（${oiRows?.length || 0}/3），跳过 OI 计算`);
+      runningCvd = nextCvd;
+      lastPrice = price;
+      if (oiContracts !== null && Number.isFinite(oiContracts)) {
+        lastOiContracts = oiContracts;
       }
-    } catch (e) {
-      console.warn(`  OI change calc failed for ${symbol}:`, e);
+      if (oiValue !== null && Number.isFinite(oiValue)) {
+        lastOiValue = oiValue;
+      }
     }
 
-    // 计算告警（返回包含价格变化率的对象）
-    const alertResult = await determineAlert(
-      symbol,
-      cvd,
-      currentCvd,
-      latestPrice,
-      oiChangePercent,
-      supabase
+    if (rowsToUpsert.length === 0) {
+      console.log(`  ⏭️ ${symbol}: 无可写入的快照`);
+      return;
+    }
+
+    const { error: upsertError } = await supabase
+      .from('cvd_data')
+      .upsert(rowsToUpsert, { onConflict: 'symbol,timestamp' });
+
+    if (upsertError) {
+      throw upsertError;
+    }
+
+    const latestSnapshot = rowsToUpsert[rowsToUpsert.length - 1];
+    const latestDelta = cvdDeltas.get(latestSnapshot.timestamp) ?? 0;
+
+    console.log(
+      `  ✓ ${symbol}: 写入 ${rowsToUpsert.length} 条快照，最新价格=$${latestSnapshot.price.toFixed(4)}, ΔCVD=${latestDelta.toFixed(2)}`
     );
 
+    const alertResult = await determineAlert(symbol, supabase);
+
     if (alertResult.alertType !== 'NONE') {
-      // 冷却机制：检查最近15分钟内是否已有相同类型警报
       const fifteenMinutesAgo = Date.now() - 15 * 60 * 1000;
 
       const { data: recentAlert } = await supabase
@@ -312,26 +504,25 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
         return;
       }
 
-      // 保存告警到数据库（使用实际计算的价格变化率）
       await supabase.from('alerts').insert({
         symbol,
         alert_type: alertResult.alertType,
-        price: latestPrice,
-        cvd: currentCvd,
-        cvd_change_percent: alertResult.priceChangePercent,
+        price: latestSnapshot.price,
+        cvd: latestSnapshot.cvd,
+        cvd_change_percent: alertResult.cvdChangePercent,
         price_change_percent: alertResult.priceChangePercent,
-        oi_change_percent: oiChangePercent,
+        oi_change_percent: alertResult.oiChangePercent,
         details: {
-          trades_count: trades.length,
-          timestamp: latestTimestamp
-        }
+          interval_ms: SNAP_INTERVAL_MS,
+          snapshot_timestamp: latestSnapshot.timestamp,
+          cvd_delta: latestDelta,
+        },
       });
-      
-      console.log(`  🚨 ${symbol}: Alert=${alertResult.alertType}, 价格变化=${alertResult.priceChangePercent.toFixed(2)}%`);
+
+      console.log(
+        `  🚨 ${symbol}: Alert=${alertResult.alertType}, 价格变化=${alertResult.priceChangePercent.toFixed(2)}%, CVD变化=${alertResult.cvdChangePercent.toFixed(2)}%, OI变化=${alertResult.oiChangePercent.toFixed(2)}%`
+      );
     }
-
-    console.log(`  ✓ ${symbol}: CVD=${currentCvd.toFixed(2)}, Price=$${latestPrice}`);
-
   } catch (error) {
     console.error(`  ✗ Failed to process ${symbol}:`, error);
     throw error;
@@ -340,78 +531,85 @@ async function processCoin(symbol: string, supabase: any): Promise<void> {
 
 async function determineAlert(
   symbol: string,
-  cvdDelta: number,
-  cumulativeCvd: number,
-  currentPrice: number,
-  oiChangePercent: number,
-  supabase: any
-): Promise<{ alertType: string; priceChangePercent: number }> {
+  supabase: SupabaseServiceClient
+): Promise<{ alertType: string; priceChangePercent: number; cvdChangePercent: number; oiChangePercent: number }> {
   try {
-    // 获取历史数据用于计算变化率和背离
     const { data: recentData } = await supabase
       .from('cvd_data')
-      .select('cvd, price, timestamp')
+      .select('cvd, price, timestamp, open_interest, open_interest_value')
       .eq('symbol', symbol)
       .order('timestamp', { ascending: false })
-      .limit(61); // 当前+60个历史点
+      .limit(60);
 
-    if (!recentData || recentData.length < 3) {
-      return { alertType: 'NONE', priceChangePercent: 0 };
+    if (!recentData || recentData.length < 2) {
+      return { alertType: 'NONE', priceChangePercent: 0, cvdChangePercent: 0, oiChangePercent: 0 };
     }
 
-    // 计算CVD变化率（最近3个点，约4-6分钟）
-    const currentCVD = parseFloat(recentData[0].cvd);
-    const prevCVD = parseFloat(recentData[2].cvd);
-    const cvdChangePercent = ((currentCVD - prevCVD) / Math.abs(prevCVD || 1)) * 100;
+    const typedRecentData = (recentData as CvdDataRow[]).map((entry) => ({
+      cvd: toNumber(entry.cvd),
+      price: toNumber(entry.price),
+      timestamp: Number(entry.timestamp),
+      openInterest: entry.open_interest_value !== undefined && entry.open_interest_value !== null
+        ? toNumber(entry.open_interest_value)
+        : entry.open_interest !== undefined && entry.open_interest !== null
+          ? toNumber(entry.open_interest)
+          : NaN,
+    }));
 
-    // 过滤异常值（CVD变化超过±100%通常是数据异常）
-    if (Math.abs(cvdChangePercent) > 100) {
-      console.warn(`  ⚠️ ${symbol}: CVD变化异常 ${cvdChangePercent.toFixed(2)}%，跳过`);
-      return { alertType: 'NONE', priceChangePercent: 0 };
+    typedRecentData.sort((a, b) => b.timestamp - a.timestamp);
+
+    const latestEntry = typedRecentData[0];
+    const referenceTimestamp = latestEntry.timestamp - SNAP_INTERVAL_MS;
+
+    let referenceEntry = typedRecentData.find((entry, index) => index > 0 && entry.timestamp <= referenceTimestamp);
+
+    if (!referenceEntry && typedRecentData.length > 1) {
+      referenceEntry = typedRecentData[typedRecentData.length - 1];
     }
 
-    // 计算价格变化率（2分钟窗口：第0点和第1点）
-    const priceNow = parseFloat(recentData[0].price);
-    const pricePrev = parseFloat(recentData[1].price);
-    const priceChangePercent = ((priceNow - pricePrev) / pricePrev) * 100;
-
-    // 1. STRONG_BREAKOUT: CVD↑≥8%、价↑≥3%（暂时禁用OI检查）
-    if (cvdChangePercent >= 8 && priceChangePercent >= 3) {
-      return { alertType: 'STRONG_BREAKOUT', priceChangePercent };
+    if (!referenceEntry) {
+      return { alertType: 'NONE', priceChangePercent: 0, cvdChangePercent: 0, oiChangePercent: 0 };
     }
 
-    // 2. ACCUMULATION: CVD↑≥15%、价格横盘±0.5%（暂时禁用OI检查）
-    if (cvdChangePercent >= 15 && Math.abs(priceChangePercent) <= 0.5) {
-      return { alertType: 'ACCUMULATION', priceChangePercent };
+    const priceChangePercent = safePercentChange(latestEntry.price, referenceEntry.price);
+    const cvdChangePercent = safePercentChange(latestEntry.cvd, referenceEntry.cvd);
+    const oiChangePercent = safePercentChange(latestEntry.openInterest, referenceEntry.openInterest);
+
+    if (Math.abs(cvdChangePercent) > 150 || Math.abs(priceChangePercent) > 50) {
+      console.warn(
+        `  ⚠️ ${symbol}: extreme change detected (price=${priceChangePercent.toFixed(2)}%, cvd=${cvdChangePercent.toFixed(2)}%), skip alert`
+      );
+      return { alertType: 'NONE', priceChangePercent: 0, cvdChangePercent: 0, oiChangePercent: 0 };
     }
 
-    // 3. DISTRIBUTION_WARN: CVD↓≥3%、价↑≥1%
-    if (cvdChangePercent <= -3 && priceChangePercent >= 1) {
-      return { alertType: 'DISTRIBUTION_WARN', priceChangePercent };
+    if (cvdChangePercent >= 8 && priceChangePercent >= 3 && oiChangePercent >= 3) {
+      return { alertType: 'STRONG_BREAKOUT', priceChangePercent, cvdChangePercent, oiChangePercent };
     }
 
-    // 4. SHORT_CONFIRM: CVD↓≥5%、价↓≥2%（暂时禁用OI检查）
-    if (cvdChangePercent <= -5 && priceChangePercent <= -2) {
-      return { alertType: 'SHORT_CONFIRM', priceChangePercent };
+    if (cvdChangePercent >= 12 && Math.abs(priceChangePercent) <= 1 && oiChangePercent >= 0) {
+      return { alertType: 'ACCUMULATION', priceChangePercent, cvdChangePercent, oiChangePercent };
     }
 
-    // 5. TOP_DIVERGENCE: 近60根内价格创新高但CVD未创新高
-    if (recentData.length >= 60) {
-      const prices = recentData.map((d: any) => parseFloat(d.price));
-      const cvds = recentData.map((d: any) => parseFloat(d.cvd));
-      
-      const maxPrice = Math.max(...prices);
-      const maxCVD = Math.max(...cvds);
-      
-      // 如果当前价格是新高（≥99.9%），但CVD显著背离（<90%）
-      if (priceNow >= maxPrice * 0.999 && currentCVD < maxCVD * 0.90) {
-        return { alertType: 'TOP_DIVERGENCE', priceChangePercent };
+    if (cvdChangePercent <= -4 && priceChangePercent >= 1 && oiChangePercent <= 0) {
+      return { alertType: 'DISTRIBUTION_WARN', priceChangePercent, cvdChangePercent, oiChangePercent };
+    }
+
+    if (cvdChangePercent <= -6 && priceChangePercent <= -2 && oiChangePercent >= 1) {
+      return { alertType: 'SHORT_CONFIRM', priceChangePercent, cvdChangePercent, oiChangePercent };
+    }
+
+    if (typedRecentData.length >= 12) {
+      const windowData = typedRecentData.slice(0, 12);
+      const maxPrice = Math.max(...windowData.map((d) => d.price));
+      const maxCvd = Math.max(...windowData.map((d) => d.cvd));
+      if (latestEntry.price >= maxPrice * 0.999 && latestEntry.cvd < maxCvd * 0.92) {
+        return { alertType: 'TOP_DIVERGENCE', priceChangePercent, cvdChangePercent, oiChangePercent };
       }
     }
 
-    return { alertType: 'NONE', priceChangePercent };
+    return { alertType: 'NONE', priceChangePercent, cvdChangePercent, oiChangePercent };
   } catch (error) {
     console.error(`Alert calculation error for ${symbol}:`, error);
-    return { alertType: 'NONE', priceChangePercent: 0 };
+    return { alertType: 'NONE', priceChangePercent: 0, cvdChangePercent: 0, oiChangePercent: 0 };
   }
 }
